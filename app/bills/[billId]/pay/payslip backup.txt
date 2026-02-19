@@ -1,0 +1,355 @@
+'use client';
+
+import { useEffect, useMemo, useState } from 'react';
+import { useSession } from 'next-auth/react';
+import { ArrowLeftIcon } from '@heroicons/react/24/solid';
+import  generatePayload  from "promptpay-qr";
+import QRCode from 'qrcode';
+
+
+type PaymentStatus = 'unpaid' | 'pending' | 'paid';
+
+type Owner = {
+  name?: string;
+  bank?: string;
+  promptPayPhone?: string;
+  bankAccountNumber?: string;
+};
+
+type Participant = {
+  userId?: string | { _id: string };
+  name?: string;
+  amount?: number;
+  paymentStatus?: 'unpaid' | 'paid'; // ลูกบิลไม่มี pending
+};
+
+type BillDoc = {
+  _id: string;
+  title: string;
+  createdBy: Owner | string;
+  participants: Participant[];
+};
+
+type BillGetOk = { bill: BillDoc };
+type BillGetErr = { error: string };
+type BillGetRes = BillGetOk | BillGetErr;
+
+type SlipInfo = {
+  imageUrl: string;
+  provider: string;
+  reference: string;
+  checkedAt: string;
+  verified: boolean;
+};
+
+type ApiOk = {
+  ok: true;
+  message: string;
+  billId: string;
+  billStatus: PaymentStatus;
+  updatedParticipant: {
+    userId: string;
+    paymentStatus: 'unpaid' | 'paid';
+    slipInfo?: SlipInfo;
+    paidAt?: string | null;
+  };
+};
+type ApiErr = { ok: false; message: string };
+type ApiRes = ApiOk | ApiErr;
+
+function cx(...classes: Array<string | false | null | undefined>) {
+  return classes.filter(Boolean).join(' ');
+}
+
+function digitsOnly(s?: string) {
+  return (s ?? '').replace(/\D/g, '');
+}
+
+function getId(v: Participant['userId']) {
+  if (!v) return '';
+  if (typeof v === 'string') return v;
+  return v._id;
+}
+
+function formatMoneyTHB(n: number) {
+  if (!Number.isFinite(n)) return '-';
+  return `฿${n.toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+}
+
+export default function PaySlipClient({ billId }: { billId: string }) {
+  const { data: session } = useSession();
+  const myId = (session?.user as { id?: string } | undefined)?.id;
+
+  // ---------- slip upload ----------
+  const [file, setFile] = useState<File | null>(null);
+  const [autoPaid, setAutoPaid] = useState<boolean>(false);
+  const [previewUrl, setPreviewUrl] = useState<string | null>(null);
+  const [loading, setLoading] = useState<boolean>(false);
+  const [result, setResult] = useState<ApiRes | null>(null);
+  const [note, setNote] = useState<string>('');
+
+  // ---------- bill/owner/pay ----------
+  const [billTitle, setBillTitle] = useState<string>('');
+  const [owner, setOwner] = useState<Owner | null>(null);
+  const [myShare, setMyShare] = useState<number>(0);
+
+  // ---------- QR ----------
+  const [qrDataUrl, setQrDataUrl] = useState<string | null>(null);
+  const [qrError, setQrError] = useState<string | null>(null);
+
+  // preview image
+  useEffect(() => {
+    if (!file) {
+      setPreviewUrl(null);
+      return;
+    }
+    const url = URL.createObjectURL(file);
+    setPreviewUrl(url);
+    return () => URL.revokeObjectURL(url);
+  }, [file]);
+
+  // fetch bill -> get owner + myShare
+  useEffect(() => {
+    let alive = true;
+
+    (async () => {
+      try {
+        const res = await fetch(`/api/bills/${billId}`, { credentials: 'include' });
+        const json = (await res.json()) as BillGetRes;
+
+        if (!alive) return;
+
+        if (!res.ok || !('bill' in json)) {
+          setOwner(null);
+          setBillTitle('');
+          setMyShare(0);
+          return;
+        }
+
+        const b = json.bill;
+        setBillTitle(b.title ?? '');
+
+        const createdByObj = typeof b.createdBy === 'object' && b.createdBy !== null ? (b.createdBy as Owner) : null;
+        setOwner(createdByObj);
+
+        if (myId) {
+          const me = b.participants.find((p) => getId(p.userId) === myId);
+          setMyShare(Number(me?.amount) || 0);
+        } else {
+          setMyShare(0);
+        }
+      } catch {
+        if (!alive) return;
+        setOwner(null);
+        setBillTitle('');
+        setMyShare(0);
+      }
+    })();
+
+    return () => {
+      alive = false;
+    };
+  }, [billId, myId]);
+
+  // generate PromptPay QR (phone only) + amount
+  useEffect(() => {
+    (async () => {
+      setQrError(null);
+
+      const phoneRaw = owner?.promptPayPhone;
+      const phone = digitsOnly(phoneRaw);
+
+      // ถ้าไม่มีเบอร์ หรือไม่ครบ 10 หลัก -> ไม่สร้าง
+      if (!phone || phone.length !== 10) {
+        setQrDataUrl(null);
+        if (phoneRaw) setQrError('เบอร์ PromptPay ต้องเป็นตัวเลข 10 หลัก (ห้ามมีขีด/เว้นวรรค)');
+        return;
+      }
+
+      try {
+        // ใส่ amount ถ้ามี (myShare > 0) — ถ้าอยากไม่ใส่ amount ให้เอา option ออกได้
+        const payload = generatePayload(phone, myShare > 0 ? { amount: myShare } : undefined);
+        const url = await QRCode.toDataURL(payload, { width: 320, margin: 1 });
+        setQrDataUrl(url);
+      } catch (e: unknown) {
+        setQrDataUrl(null);
+        const msg = e instanceof Error ? e.message : 'QR generate failed';
+        setQrError(msg);
+      }
+    })();
+  }, [owner?.promptPayPhone, myShare]);
+
+  const canSubmit = useMemo(() => Boolean(file) && !loading, [file, loading]);
+
+  async function onSubmit() {
+    if (!file) return;
+
+    setLoading(true);
+    setResult(null);
+
+    try {
+      const form = new FormData();
+      form.append('file', file);
+      form.append('autoPaid', String(autoPaid));
+      form.append('note', note);
+
+      const res = await fetch(`/api/bills/${billId}/slip-check`, {
+        method: 'POST',
+        body: form,
+        credentials: 'include',
+      });
+
+      const json = (await res.json()) as unknown;
+
+      if (typeof json === 'object' && json !== null && 'ok' in json && typeof (json as { ok?: unknown }).ok === 'boolean') {
+        setResult(json as ApiRes);
+      } else {
+        setResult({ ok: false, message: 'Invalid response from server' });
+      }
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : 'Network error';
+      setResult({ ok: false, message: msg });
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  return (
+    <div className="min-h-screen bg-[radial-gradient(circle_at_top_right,#fff5e6_0%,#ffffff_40%,#fff0e0_100%)]">
+      {/* Header */}
+      <div className="sticky top-0 z-10 bg-white border-b">
+        <div className="max-w-6xl mx-auto px-4 py-4 flex items-center justify-between">
+          <div>
+            <div className="text-xs text-gray-500">Dashboard / Bills / Verify Slip</div>
+            <div className="text-xl font-bold text-[#4a4a4a] mt-1">Verify Payment Slip</div>
+            <div className="text-xs text-gray-500 mt-1">
+              Transaction ID: <span className="font-semibold text-gray-600">{billId}</span>
+            </div>
+            <div className="text-xs text-gray-500 mt-1">
+              Bill: <span className="font-semibold text-gray-700">{billTitle || '-'}</span>
+            </div>
+          </div>
+
+          <button
+            type="button"
+            onClick={() => window.history.back()}
+            className="inline-flex items-center gap-2 px-4 py-2 rounded-xl border bg-white hover:bg-gray-50 text-sm font-semibold text-gray-700"
+          >
+            Back to List
+          </button>
+        </div>
+      </div>
+
+      <div className="max-w-6xl mx-auto px-4 py-6 space-y-5">
+        {/* Pay to PromptPay + QR */}
+        <div className="bg-white rounded-2xl shadow-sm border p-5">
+          <div className="text-lg font-bold text-gray-800 mb-4">Pay to (PromptPay)</div>
+
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
+            {/* left info */}
+            <div className="rounded-2xl border bg-gray-50 p-5">
+              <div className="text-xs text-gray-500">Receiver</div>
+              <div className="text-lg font-extrabold text-gray-900 mt-1">{owner?.name ?? '-'}</div>
+
+              <div className="mt-4 text-xs text-gray-500">Bank</div>
+              <div className="font-bold text-gray-900 mt-1">{owner?.bank ?? '-'}</div>
+
+              <div className="mt-4 text-xs text-gray-500">PromptPay (Phone)</div>
+              <div className="font-extrabold text-gray-900 mt-1">{owner?.promptPayPhone ?? '-'}</div>
+
+              <div className="mt-4 text-xs text-gray-500">Amount</div>
+              <div className="text-2xl font-extrabold text-[#e65100] mt-1">{formatMoneyTHB(myShare)}</div>
+
+              <div className="mt-3 text-[11px] text-gray-400">
+                * จ่ายเข้าบัญชีนี้ได้ “ข้ามธนาคาร” ผ่าน PromptPay
+              </div>
+            </div>
+
+            {/* right QR */}
+            <div className="rounded-2xl border bg-white p-5 flex items-center justify-center">
+              {qrDataUrl ? (
+                // eslint-disable-next-line @next/next/no-img-element
+                <img src={qrDataUrl} alt="PromptPay QR" className="w-[320px] h-[320px] object-contain" />
+              ) : (
+                <div className="text-sm text-gray-400 text-center">
+                  ไม่มีข้อมูล PromptPay ของหัวบิล
+                  {qrError ? <div className="mt-2 text-xs text-red-500">{qrError}</div> : null}
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+
+        {/* ORIGINAL RECEIPT + verify (ของเดิมคุณ) */}
+        <div className="bg-white rounded-2xl shadow-sm border overflow-hidden">
+          <div className="flex items-center justify-between px-5 py-4 border-b">
+            <div className="font-semibold text-gray-800">ORIGINAL RECEIPT</div>
+
+            <label className="inline-flex items-center gap-2 text-sm text-gray-600 cursor-pointer">
+              <input type="file" accept="image/*" className="hidden" onChange={(e) => setFile(e.target.files?.[0] ?? null)} />
+              <span className="px-4 py-2 rounded-xl border bg-white hover:bg-gray-50">เลือกไฟล์</span>
+            </label>
+          </div>
+
+          <div className="p-5">
+            <div className="rounded-2xl border bg-gray-50 overflow-hidden">
+              {previewUrl ? (
+                // eslint-disable-next-line @next/next/no-img-element
+                <img src={previewUrl} alt="slip preview" className="w-full h-[520px] object-contain" />
+              ) : (
+                <div className="h-[520px] flex items-center justify-center text-gray-400 text-sm">ยังไม่ได้เลือกรูปสลิป</div>
+              )}
+            </div>
+
+            <div className="mt-4 flex items-center justify-between gap-3">
+              <label className="flex items-center gap-2 text-sm text-gray-600 select-none">
+                <input type="checkbox" checked={autoPaid} onChange={(e) => setAutoPaid(e.target.checked)} className="h-4 w-4" />
+                ผ่านแล้วให้เป็น <b className="text-gray-800">paid</b> ทันที (ไม่งั้นจะเป็น <b className="text-gray-800">pending</b>)
+              </label>
+
+              <button
+                type="button"
+                onClick={onSubmit}
+                disabled={!canSubmit}
+                className={cx(
+                  'px-5 py-3 rounded-xl font-semibold text-white transition',
+                  canSubmit ? 'bg-[#fb8c00] hover:bg-[#e65100]' : 'bg-gray-300 cursor-not-allowed'
+                )}
+              >
+                {loading ? 'Verifying...' : 'Verify Slip'}
+              </button>
+            </div>
+
+            <div className="mt-4">
+              <textarea
+                value={note}
+                onChange={(e) => setNote(e.target.value)}
+                rows={3}
+                placeholder="Internal Notes (Optional)"
+                className="w-full rounded-2xl border px-4 py-3 text-sm text-gray-800 outline-none focus:ring-2 focus:ring-[#fb8c00]"
+              />
+            </div>
+
+            {result && !result.ok ? (
+              <div className="mt-4 rounded-2xl border bg-red-50 text-red-700 px-4 py-3 text-sm">{result.message}</div>
+            ) : null}
+
+            {result && result.ok ? (
+              <div className="mt-4 rounded-2xl border bg-green-50 text-green-800 px-4 py-3 text-sm">{result.message}</div>
+            ) : null}
+          </div>
+        </div>
+      </div>
+
+      {/* Floating back button */}
+      <button
+        onClick={() => window.history.back()}
+        className="fixed top-5 left-5 flex items-center gap-2 px-2 py-2 bg-[#fb8c00] text-white rounded-xl shadow-md hover:shadow-xl hover:scale-105 transition-all duration-300"
+        type="button"
+      >
+        <ArrowLeftIcon className="h-5 w-5" />
+        <span className="font-medium">Go Back</span>
+      </button>
+    </div>
+  );
+}

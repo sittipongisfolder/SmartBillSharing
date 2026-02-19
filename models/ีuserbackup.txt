@@ -1,0 +1,31 @@
+import mongoose, { Schema, Document, Model } from 'mongoose';
+
+// ประกาศ interface สำหรับข้อมูล user
+interface IUser extends Document {
+  name: string;
+  email: string;
+  password: string;
+  bank: string; 
+  bankAccountNumber?: string; 
+  promptPayPhone?: string; // อาจจะมีหรือไม่มี
+  role?: 'user' | 'admin';
+}
+
+// สร้าง schema
+const userSchema: Schema<IUser> = new Schema(
+  {
+    name: { type: String, required: true },
+    email: { type: String, required: true },
+    password: { type: String, required: true },
+    bank: { type: String, required: true }, // กำหนดค่าเริ่มต้นเป็นค่าว่าง
+    bankAccountNumber: { type: String, required: true }, // กำหนดค่าเริ่มต้นเป็นค่าว่าง
+    promptPayPhone: { type: String, required: true , match:/^0\d{9}$/ }, // อาจจะมีหรือไม่มี
+    role: { type: String, enum: ['user', 'admin'], default: 'user' }
+  },
+  { timestamps: true }
+);
+
+// ตรวจสอบก่อนสร้าง model เพื่อหลีกเลี่ยง error เวลา hot-reload
+const User: Model<IUser> = mongoose.models.User || mongoose.model<IUser>('User', userSchema);
+
+export default User;

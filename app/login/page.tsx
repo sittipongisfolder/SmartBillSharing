@@ -1,0 +1,153 @@
+'use client';
+
+import React, { useState } from 'react';
+import { signIn } from 'next-auth/react';
+import { useRouter } from 'next/navigation';
+import Link from 'next/link';
+import { FaEye, FaEyeSlash } from 'react-icons/fa';
+
+export default function Login() {
+  const [username, setUsername] = useState('');
+  const [password, setPassword] = useState('');
+  const [error, setError] = useState('');
+  const [showPassword, setShowPassword] = useState(false);
+
+  const router = useRouter();
+
+  const handleLoginSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
+    e.preventDefault();
+    try {
+      const res = await signIn('credentials', {
+        redirect: false,
+        username,
+        password,
+      });
+
+      if (res?.error) {
+        setError('เข้าสู่ระบบล้มเหลว รหัสผ่านหรือชื่อผู้ใช้ไม่ถูกต้อง');
+        return;
+      }
+
+      router.push('/dashboard');
+    } catch (error) {
+      console.error('Error during login:', error);
+      setError('Something went wrong. Please try again.');
+    }
+  };
+
+  return (
+    <div className="min-h-screen p-6 flex items-center justify-center bg-[radial-gradient(circle_at_top_right,#fff5e6_0%,#ffffff_40%,#fff0e0_100%)]">
+      <div className="w-full max-w-[460px]">
+        <div className="bg-white rounded-[2.5rem] p-8 md:p-12 space-y-10 border border-orange-50/50 shadow-[0_25px_50px_-12px_rgba(251,140,0,0.15)]">
+          {/* Header */}
+          <div className="text-center space-y-4">
+           
+    
+            <div className="space-y-1">
+              <h1 className="text-2xl md:text-[26px] font-extrabold tracking-tight text-[var(--text-color)] leading-tight">
+                Smart Bill <span className="text-[#fb8c00]">Sharing</span> System
+              </h1>
+              <p className="text-gray-500 font-medium">Welcome back, please login.</p>
+            </div>
+          </div>
+
+          {/* Form */}
+          <form onSubmit={handleLoginSubmit} className="space-y-6">
+            {/* Email */}
+            <div className="space-y-2">
+              <label className="text-sm font-semibold text-gray-700 ml-1" htmlFor="username">
+                Email Address
+              </label>
+              <div className="relative">
+                <input
+                  className="peer h-12 w-full border border-gray-300 rounded-lg text-[var(--text-color)]  focus:outline-none focus:ring-2 focus:ring-[var(--brand-primary)] focus:border-transparent px-4"
+                  id="username"
+                  name="email"
+                  type="email"
+                  placeholder="name@company.com"
+                  required
+                  value={username}
+                  onChange={(e) => setUsername(e.target.value)}
+                />
+              </div>
+            </div>
+
+            {/* Password */}
+            <div className="space-y-2">
+              <div className="flex items-center justify-between ml-1">
+                <label className="text-sm font-semibold text-gray-700" htmlFor="password">
+                  Password
+                </label>
+                <button
+                  type="button"
+                  className="text-xs font-semibold text-[#fb8c00] hover:underline"
+                  onClick={() => {}}
+                >
+                  Forgot?
+                </button>
+              </div>
+
+              <div className="relative">
+                <input
+                  className="peer h-12 w-full border border-gray-300 rounded-lg text-[var(--text-color)]  focus:outline-none focus:ring-2 focus:ring-[var(--brand-primary)] focus:border-transparent px-4"
+                  name="password"
+                  type={showPassword ? 'text' : 'password'}
+                  placeholder="••••••••"
+                  required
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                />
+
+                <button
+                  type="button"
+                  onMouseDown={() => setShowPassword(true)}
+                  onMouseUp={() => setShowPassword(false)}
+                  onMouseLeave={() => setShowPassword(false)}
+                  className="absolute right-4 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600"
+                  aria-label="toggle password"
+                >
+                  {showPassword ? <FaEyeSlash /> : <FaEye />}
+                </button>
+              </div>
+            </div>
+
+            {/* Error */}
+            {error && <p className="text-red-500 text-sm font-medium">{error}</p>}
+
+            {/* Button */}
+            <div className="pt-2">
+              <button
+                type="submit"
+                className="w-full text-white font-bold py-4 rounded-xl shadow-lg shadow-orange-200 hover:shadow-orange-300
+                           hover:-translate-y-0.5 transition-all duration-300 active:scale-[0.98]
+                           bg-[linear-gradient(135deg,#fb8c00_0%,#e65100_100%)]"
+              >
+                Sign In
+              </button>
+            </div>
+          </form>
+
+          {/* Footer link */}
+          <div className="text-center pt-2">
+            <p className="text-sm text-gray-500 font-medium">
+              Don&apos;t have an account?
+              <Link
+                href="/register"
+                className="ml-1 text-[#fb8c00] font-bold hover:text-[#e65100] transition-colors"
+              >
+                Join Now
+              </Link>
+            </p>
+          </div>
+        </div>
+
+        {/* Dots */}
+        <div className="mt-8 flex justify-center space-x-2 opacity-20">
+          <div className="w-2 h-2 rounded-full bg-orange-400" />
+          <div className="w-2 h-2 rounded-full bg-orange-300" />
+          <div className="w-2 h-2 rounded-full bg-orange-200" />
+        </div>
+      </div>
+    </div>
+  );
+}
