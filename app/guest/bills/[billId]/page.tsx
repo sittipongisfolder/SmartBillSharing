@@ -25,7 +25,13 @@ type GuestBillView = {
   participants: ParticipantLean[];
 };
 
-export default async function GuestBillPage({ params }: { params: { billId: string } }) {
+export default async function GuestBillPage({
+  params,
+}: {
+  params: Promise<{ billId: string }>;
+}) {
+  const { billId } = await params;
+
   // ✅ FIX: cookies() ต้อง await
   const cookieStore = await cookies();
   const rawSession = cookieStore.get('sb_guest')?.value;
@@ -37,7 +43,7 @@ export default async function GuestBillPage({ params }: { params: { billId: stri
   await connectMongoDB();
 
   const [bill, guest] = await Promise.all([
-    Bill.findById(params.billId)
+    Bill.findById(billId)
       .select('title totalPrice participants')
       .lean<GuestBillView>(),
     Guest.findById(guestId)
