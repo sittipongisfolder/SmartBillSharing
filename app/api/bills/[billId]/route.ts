@@ -303,7 +303,7 @@ export async function PATCH(req: NextRequest, ctx: { params: Promise<{ billId: s
 
     billDoc.title = nextTitle;
     billDoc.description = nextDescription;
-    billDoc.items = cleanedItems;
+    billDoc.items = cleanedItems as unknown as typeof billDoc.items;
     billDoc.totalPrice = finalTotal;
 
     if (body.splitType) billDoc.splitType = body.splitType;
