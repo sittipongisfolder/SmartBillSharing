@@ -1,7 +1,7 @@
 'use client';
 
 import { useSearchParams, useRouter } from 'next/navigation';
-import { useEffect, useState, useRef } from 'react';
+import { Suspense, useEffect, useState, useRef } from 'react';
 import {  CheckCircleIcon } from '@heroicons/react/24/solid';
 import { useSession } from 'next-auth/react';
 
@@ -20,7 +20,7 @@ interface Participant {
 
 type SplitType = 'equal' | 'percentage' | 'personal';
 
-export default function CreateBillPage() {
+function CreateBillPageInner() {
   const searchParams = useSearchParams();
   const router = useRouter();
   const splitTypeRaw = searchParams.get('type');
@@ -454,4 +454,5 @@ export default function CreateBillPage() {
     </div>
   </div>
   );
+  
 }
