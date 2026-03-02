@@ -6,8 +6,12 @@ import { hashToken } from '@/lib/tokens';
 
 export const runtime = 'nodejs';
 
-export default async function InviteJoinPage({ params }: { params: { token: string } }) {
-  const rawToken = params.token;
+export default async function InviteJoinPage({
+  params,
+}: {
+  params: Promise<{ token: string }>;
+}) {
+  const { token: rawToken } = await params;
 
   await connectMongoDB();
   const tokenHash = hashToken(rawToken);
