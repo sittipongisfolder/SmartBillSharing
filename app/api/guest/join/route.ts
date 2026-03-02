@@ -150,7 +150,7 @@ export async function POST(req: Request) {
   res.cookies.set("sb_guest", rawSession, {
     httpOnly: true,
     sameSite: "lax",
-    secure: process.env.NODE_ENV === "production",
+    secure: process.env.VERCEL_ENV === "production",
     path: "/",
     maxAge: 30 * 24 * 60 * 60,
   });

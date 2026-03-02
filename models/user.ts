@@ -1,5 +1,12 @@
 import mongoose, { Schema, Document, Model } from "mongoose";
 
+type UserRole = "user" | "admin";
+
+type LineInfo = {
+  userId: string | null;     // LINE userId ที่ได้จาก webhook
+  linkedAt: Date | null;     // เวลาที่ผูกสำเร็จ
+};
+
 interface IUser extends Document {
   name: string;
   email: string;
@@ -11,7 +18,11 @@ interface IUser extends Document {
   // ✅ บังคับ PromptPay (เบอร์โทรอย่างเดียว)
   promptPayPhone: string;
 
-  role?: "user" | "admin";
+  role?: UserRole;
+
+  // ✅ เพิ่มสำหรับ LINE OA
+  line?: LineInfo;
+  lineNotifyEnabled?: boolean;
 }
 
 const userSchema: Schema<IUser> = new Schema(
@@ -35,7 +46,6 @@ const userSchema: Schema<IUser> = new Schema(
       type: String,
       required: true,
       trim: true,
-      // (ถ้าคุณยังอยากใช้เลขบัญชี 10 หลักเหมือนเดิม)
       match: [/^\d{10}$/, "bankAccountNumber must be 10 digits"],
     },
 
@@ -49,9 +59,21 @@ const userSchema: Schema<IUser> = new Schema(
     },
 
     role: { type: String, enum: ["user", "admin"], default: "user" },
+
+    // ✅ LINE OA link
+    line: {
+      userId: { type: String, default: null },
+      linkedAt: { type: Date, default: null },
+    },
+
+    // ✅ เปิด/ปิดแจ้งเตือน LINE
+    lineNotifyEnabled: { type: Boolean, default: true },
   },
   { timestamps: true }
 );
+
+// ✅ ทำ index ให้ line.userId เป็น unique แบบ sparse (กัน null ชนกัน)
+userSchema.index({ "line.userId": 1 }, { unique: true, sparse: true });
 
 // ✅ กันปัญหา hot-reload + ใช้ schema เดียว
 const User: Model<IUser> = mongoose.models.User || mongoose.model<IUser>("User", userSchema);
