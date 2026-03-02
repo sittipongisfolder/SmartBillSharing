@@ -81,9 +81,7 @@ function computeBillStatus(
   return 'unpaid';
 }
 
-type RouteContext = { params: Promise<{ billId: string }> };
-
-export async function PATCH(req: NextRequest, context: RouteContext) {
+export async function PATCH(req: NextRequest, context: { params: { billId: string } }) {
   try {
     const session = await getServerSession(authOptions);
     if (!session?.user) {
@@ -93,9 +91,7 @@ export async function PATCH(req: NextRequest, context: RouteContext) {
     const user = session.user as SessionUserWithId;
     const sessionUserId = user.id;
 
-    // ✅ บรรทัดนี้ใช้ได้เหมือนเดิม ไม่ต้องแก้
     const { billId } = await context.params;
-
     const body = (await req.json()) as UpdateParticipantBody;
 
     if (!body.userId) {
