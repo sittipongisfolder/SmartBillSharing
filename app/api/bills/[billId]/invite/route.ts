@@ -14,7 +14,13 @@ type CreateInviteBody = {
   maxUses?: number;
 };
 
-export async function POST(req: Request, { params }: { params: { billId: string } }) {
+type RouteContext = {
+  params: Promise<{ billId: string }>;
+};
+
+export async function POST(req: Request, { params }: RouteContext) {
+  const { billId } = await params; // ✅ สำคัญ: ต้อง await
+
   const session = await getServerSession(authOptions);
   const userId = session?.user?.id;
   if (!userId) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
@@ -32,7 +38,7 @@ export async function POST(req: Request, { params }: { params: { billId: string 
 
   await connectMongoDB();
 
-  const bill = await Bill.findById(params.billId).lean();
+  const bill = await Bill.findById(billId).lean(); // ✅ ใช้ billId ที่ await มาแล้ว
   if (!bill) return NextResponse.json({ error: 'Bill not found' }, { status: 404 });
 
   if (String(bill.createdBy) !== String(userId)) {
@@ -53,9 +59,5 @@ export async function POST(req: Request, { params }: { params: { billId: string 
     revoked: false,
   });
 
-  return NextResponse.json({
-    invitePath: `/i/${rawToken}`,
-    expiresAt,
-    maxUses,
-  });
+  return NextResponse.json({ invitePath: `/i/${rawToken}`, expiresAt, maxUses });
 }
