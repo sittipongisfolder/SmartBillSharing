@@ -104,6 +104,30 @@ function isBillResponse(x: unknown): x is { bill: Bill } {
   return isObject(x) && 'bill' in x && isObject((x as Record<string, unknown>).bill);
 }
 
+type CreateInviteResponse = {
+  invitePath: string;
+  expiresAt: string;
+  maxUses: number;
+};
+
+type InviteInfo = {
+  url: string;
+  expiresAt: string;
+  maxUses: number;
+};
+
+function isCreateInviteResponse(x: unknown): x is CreateInviteResponse {
+  if (!isObject(x)) return false;
+  const r = x as Record<string, unknown>;
+  return (
+    typeof r.invitePath === 'string' &&
+    typeof r.expiresAt === 'string' &&
+    typeof r.maxUses === 'number'
+  );
+}
+
+
+
 // ✅ Hybrid billStatus: "ไม่นับหัวบิล"
 function computeBillStatusHybrid(bill: Bill): PaymentStatus {
   const ownerId = normalizeId(bill.createdBy);
@@ -565,7 +589,11 @@ export default function HistoryPage() {
     checkedAt?: string;
     verified?: boolean;
   } | null>(null);
-
+  // ✅ Invite link state
+  const [inviteByBillId, setInviteByBillId] = useState<Record<string, InviteInfo>>({});
+  const [inviteLoadingId, setInviteLoadingId] = useState<string | null>(null);
+  const [inviteErrorByBillId, setInviteErrorByBillId] = useState<Record<string, string>>({});
+  const [copiedBillId, setCopiedBillId] = useState<string | null>(null);
   useEffect(() => {
     const fetchBills = async () => {
       try {
@@ -587,21 +615,11 @@ export default function HistoryPage() {
   }, []);
 
   const ensureBillDetail = async (billId: string) => {
-    if (detailById[billId]) return;
-
     setDetailLoadingId(billId);
     try {
       const res = await fetch(`/api/bills/${billId}`, { cache: 'no-store' });
       const json: unknown = await res.json();
-
-      if (!res.ok) {
-        const msg =
-          isObject(json) && typeof (json as { error?: unknown }).error === 'string'
-            ? (json as { error: string }).error
-            : `Failed to load bill detail (${res.status})`;
-        throw new Error(msg);
-      }
-
+      if (!res.ok) throw new Error('Failed to load bill detail');
       if (!isBillResponse(json)) throw new Error('Invalid API response shape');
       setDetailById((prev) => ({ ...prev, [billId]: json.bill }));
     } catch (e) {
@@ -609,6 +627,60 @@ export default function HistoryPage() {
     } finally {
       setDetailLoadingId(null);
     }
+  };
+  const createInviteLink = async (billId: string) => {
+    setInviteLoadingId(billId);
+
+    // clear error ของบิลนี้
+    setInviteErrorByBillId((prev) => {
+      const next = { ...prev };
+      delete next[billId];
+      return next;
+    });
+
+    try {
+      const res = await fetch(`/api/bills/${billId}/invite`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ expiresInDays: 7, maxUses: 50 }),
+      });
+
+      // พยายามอ่าน json ก่อน (ถ้าไม่ได้ให้เป็น null)
+      const json: unknown = await res.json().catch(() => null);
+
+      if (!res.ok) {
+        const msg =
+          isObject(json) && typeof (json as Record<string, unknown>).error === 'string'
+            ? String((json as Record<string, unknown>).error)
+            : `Create invite failed (${res.status})`;
+        throw new Error(msg);
+      }
+
+      if (!isCreateInviteResponse(json)) {
+        throw new Error('Invalid invite API response shape');
+      }
+
+      const fullUrl = `${window.location.origin}${json.invitePath}`;
+
+      setInviteByBillId((prev) => ({
+        ...prev,
+        [billId]: { url: fullUrl, expiresAt: json.expiresAt, maxUses: json.maxUses },
+      }));
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : 'Unknown error';
+      setInviteErrorByBillId((prev) => ({ ...prev, [billId]: msg }));
+    } finally {
+      setInviteLoadingId(null);
+    }
+  };
+
+  const copyInviteLink = async (billId: string) => {
+    const info = inviteByBillId[billId];
+    if (!info) return;
+
+    await navigator.clipboard.writeText(info.url);
+    setCopiedBillId(billId);
+    window.setTimeout(() => setCopiedBillId(null), 1200);
   };
 
   useEffect(() => {
@@ -1061,6 +1133,61 @@ export default function HistoryPage() {
                                       })}
                                     </div>
                                   </div>
+                                  {/* ✅ Invite link (เฉพาะเจ้าของบิล) */}
+                                  {detailIsCreator ? (
+                                    <div className="bg-white rounded-2xl border p-4 md:col-span-2">
+                                      <div className="flex items-start justify-between gap-3">
+                                        <div>
+                                          <div className="font-semibold text-gray-800">ลิงก์เชิญเพื่อน (Guest)</div>
+                                          <div className="text-xs text-gray-500">
+                                            ส่งลิงก์นี้ให้เพื่อนเข้าร่วมบิลได้โดยไม่ต้องสมัคร
+                                          </div>
+                                        </div>
+
+                                        <button
+                                          type="button"
+                                          onClick={() => void createInviteLink(billId)}
+                                          disabled={inviteLoadingId === billId}
+                                          className="px-4 py-2 rounded-xl bg-[#fb8c00] text-white font-semibold hover:bg-[#e65100] disabled:opacity-60"
+                                        >
+                                          {inviteLoadingId === billId ? 'กำลังสร้าง...' : 'สร้างลิงก์'}
+                                        </button>
+                                      </div>
+
+                                      {inviteErrorByBillId[billId] ? (
+                                        <div className="mt-3 rounded-xl bg-red-50 px-4 py-3 text-sm text-red-700">
+                                          {inviteErrorByBillId[billId]}
+                                        </div>
+                                      ) : null}
+
+                                      {inviteByBillId[billId] ? (
+                                        <div className="mt-3 rounded-xl bg-[#f5f5f5] p-4">
+                                          <div className="text-xs text-gray-500">Invite link</div>
+                                          <div className="mt-1 break-all text-sm font-semibold text-gray-900">
+                                            {inviteByBillId[billId].url}
+                                          </div>
+
+                                          <div className="mt-3 flex flex-wrap items-center gap-2">
+                                            <button
+                                              type="button"
+                                              onClick={() => void copyInviteLink(billId)}
+                                              className="px-3 py-2 rounded-xl border text-gray-900 bg-white hover:bg-gray-50 text-sm"
+                                            >
+                                              {copiedBillId === billId ? 'คัดลอกแล้ว' : 'คัดลอกลิงก์'}
+                                            </button>
+
+                                            <span className="text-xs text-gray-500">
+                                              หมดอายุ: {new Date(inviteByBillId[billId].expiresAt).toLocaleString('th-TH')}
+                                            </span>
+
+                                            <span className="text-xs text-gray-500">
+                                              ใช้ได้สูงสุด: {inviteByBillId[billId].maxUses} ครั้ง
+                                            </span>
+                                          </div>
+                                        </div>
+                                      ) : null}
+                                    </div>
+                                  ) : null}
 
                                   {/* ✅ ส่วนดูสลิป (หัวบิลเห็นทุกคน / ลูกบิลเห็นของตัวเอง) */}
                                   {canViewSlipSection ? (

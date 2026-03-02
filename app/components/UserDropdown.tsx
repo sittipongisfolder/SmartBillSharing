@@ -100,7 +100,7 @@ export default function UserDropdown() {
                   className="flex items-center px-4 py-3 text-sm font-medium text-gray-700 hover:bg-gray-100 hover:text-gray-900 transition"
                 >
                   <UserIcon className="h-5 w-5 mr-3 text-gray-500" />
-                  Account center & Settings
+                  ศูนย์ผู้ใช้งาน & การตั้งค่า
                 </Link>
               </Menu.Item>
 

@@ -345,11 +345,11 @@ export default function PaySlipClient({ billId }: { billId: string }) {
                 </div>
 
                 <div className="flex justify-between items-center">
-                   <label htmlFor="tip-input" className="text-sm text-gray-500 flex items-center gap-1">
+                   <label htmlFor="tip-input" className="text-sm text-gray-900 flex items-center gap-1">
                      ทิป (Tip) ❤️
                    </label>
-                   <div className="relative">
-                     <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 text-sm">฿</span>
+                   <div className="relative text-gray-900">
+                     <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-900 text-sm">฿</span>
                      <input
                        id="tip-input"
                        type="number"
@@ -360,12 +360,12 @@ export default function PaySlipClient({ billId }: { billId: string }) {
                          setTip(isNaN(val) ? 0 : val);
                        }}
                        placeholder="0"
-                       className="w-24 text-right rounded-lg border border-gray-300 py-1 pl-6 pr-2 text-sm focus:border-[#fb8c00] focus:ring-1 focus:ring-[#fb8c00] outline-none"
+                       className="w-24 text-right rounded-lg border border-gray-900 py-1 pl-6 pr-2 text-sm focus:border-[#fb8c00] focus:ring-1 focus:ring-[#fb8c00] outline-none"
                      />
                    </div>
                 </div>
 
-                <div className="pt-2 border-t border-dashed border-gray-300 flex justify-between items-end">
+                <div className="pt-2 border-t border-dashed border-gray-900 flex justify-between items-end">
                   <span className="text-sm font-semibold text-gray-700">ยอดโอนรวม (Total)</span>
                   <span className="text-3xl font-extrabold text-[#e65100]">
                     {formatMoneyTHB(myShare + tip)}

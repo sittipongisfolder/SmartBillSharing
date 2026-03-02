@@ -1,26 +1,32 @@
-import mongoose, { Schema, models } from 'mongoose';
+import mongoose, { Schema, models, type InferSchemaType, type Model } from 'mongoose';
 
-// Schema ของรายการอาหาร
-// const itemSchema = new Schema({
-//   name: { type: String, required: true },
-//   price: { type: Number, required: true }
-// });
+const slipInfoSchema = new Schema(
+  {
+    imageUrl: { type: String, default: '' },
+    publicId: { type: String },
+    provider: { type: String, default: '' },
+    reference: { type: String, default: '' },
+    checkedAt: { type: Date },
+    verified: { type: Boolean, default: false },
+  },
+  { _id: false }
+);
 
-/**
- * ✅ เคส A:
- * - PaymentStatus (ของคนจ่าย) = unpaid | paid เท่านั้น
- * - billStatus (ของบิลรวม) ยังใช้ unpaid | pending | paid ได้
- */
-export type PaymentStatus = 'unpaid' | 'paid';
-
-// Schema ของผู้เข้าร่วมบิล
 const participantSchema = new Schema(
   {
+    kind: {
+      type: String,
+      enum: ['user', 'guest'],
+      default: 'user',
+      index: true,
+    },
+
     userId: { type: Schema.Types.ObjectId, ref: 'User' },
+    guestId: { type: Schema.Types.ObjectId, ref: 'Guest' },
+
     name: { type: String, required: true },
     amount: { type: Number, required: true },
 
-    // ✅ สถานะการจ่ายของแต่ละคน (เคส A: ไม่มี pending)
     paymentStatus: {
       type: String,
       enum: ['unpaid', 'paid'],
@@ -28,22 +34,13 @@ const participantSchema = new Schema(
       index: true,
     },
 
-    // ✅ เผื่อไว้สำหรับสลิป (ไม่บังคับ)
-    slipInfo: {
-      imageUrl: { type: String, default: '' },     // url รูปสลิป (ถ้ามี)
-      publicId: { type: String },
-      provider: { type: String, default: '' },     // ชื่อ provider ที่ check slip
-      reference: { type: String, default: '' },    // ref จาก provider
-      checkedAt: { type: Date },                   // เวลาเช็ค
-      verified: { type: Boolean, default: false }, // ผ่าน/ไม่ผ่าน
-    },
-
-    paidAt: { type: Date }, // optional: เวลาที่ paid จริง
+    slipInfo: { type: slipInfoSchema, default: undefined },
+    paidAt: { type: Date },
   },
   { _id: false }
 );
 
-const itemsList = new Schema(
+const itemSchema = new Schema(
   {
     items: { type: String, required: true },
     price: { type: Number, required: true },
@@ -51,35 +48,39 @@ const itemsList = new Schema(
   { _id: false }
 );
 
-// Schema ของบิล
-const billSchema = new Schema({
-  title: { type: String, required: true },
-  items: { type: [itemsList], required: true },
-  totalPrice: { type: Number, required: true },
+const billSchema = new Schema(
+  {
+    title: { type: String, required: true },
+    items: { type: [itemSchema], required: true },
+    totalPrice: { type: Number, required: true },
 
-  splitType: {
-    type: String,
-    enum: ['equal', 'percentage', 'personal'],
-    required: true,
+    splitType: {
+      type: String,
+      enum: ['equal', 'percentage', 'personal'],
+      required: true,
+    },
+
+    participants: { type: [participantSchema], default: [] },
+    description: { type: String, default: '' },
+
+    createdBy: { type: Schema.Types.ObjectId, ref: 'User' },
+    createdAt: { type: Date, default: Date.now },
+
+    billStatus: {
+      type: String,
+      enum: ['unpaid', 'pending', 'paid'],
+      default: 'unpaid',
+      index: true,
+    },
   },
+  { timestamps: false }
+);
 
-  participants: { type: [participantSchema], default: [] },
-  description: { type: String, default: '' },
+billSchema.index({ 'participants.userId': 1 });
+billSchema.index({ 'participants.guestId': 1 });
 
-  createdBy: { type: Schema.Types.ObjectId, ref: 'User' },
-  createdAt: { type: Date, default: Date.now },
+export type BillSchemaType = InferSchemaType<typeof billSchema>;
+type BillModelType = Model<BillSchemaType>;
 
-  // ✅ สถานะรวมของบิล (คำนวณจาก participants)
-  
-  billStatus: {
-    type: String,
-    enum: ['unpaid', 'pending', 'paid'],
-    default: 'unpaid',
-    index: true,
-  },
-});
-
-// เช็คว่า Model 'Bill' มีอยู่ใน models หรือไม่
-const Bill = models.Bill || mongoose.model('Bill', billSchema);
-
+const Bill = (models.Bill as BillModelType) || mongoose.model<BillSchemaType>('Bill', billSchema);
 export default Bill;
