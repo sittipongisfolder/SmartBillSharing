@@ -1,7 +1,7 @@
 'use client';
 
 import { useSearchParams } from 'next/navigation';
-import { useEffect, useState } from 'react';
+import {  Suspense, useEffect, useState } from 'react';
 import { ArrowLeftIcon } from '@heroicons/react/24/solid';
 
 interface User {
@@ -23,7 +23,7 @@ interface Participant {
   amount: number;
 }
 
-export default function CreateBillPage() {
+function CreatePercentPageInner() {
   const searchParams = useSearchParams();
   const splitType = searchParams.get('type');
   const [title, setTitle] = useState('');
@@ -153,5 +153,12 @@ export default function CreateBillPage() {
       </button>
 
     </div>
+  );
+}
+export default function CreatePercentPage() {
+  return (
+    <Suspense fallback={<div className="min-h-screen bg-[#fbf7f1]" />}>
+      <CreatePercentPageInner />
+    </Suspense>
   );
 }
