@@ -1,7 +1,7 @@
 'use client';
 
 import { useSearchParams } from 'next/navigation';
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { Suspense, useEffect, useMemo, useRef, useState } from 'react';
 import {  CheckCircleIcon } from '@heroicons/react/24/solid';
 import { useSession } from 'next-auth/react';
 
@@ -31,7 +31,7 @@ const makeId = () =>
     ? crypto.randomUUID()
     : `${Date.now()}_${Math.random().toString(16).slice(2)}`;
 
-export default function CreateBillPersonalPage() {
+function CreateBillPersonalPageInner() {
   const searchParams = useSearchParams();
   const splitTypeRaw = searchParams.get('type');
   const splitType = (splitTypeRaw as SplitType) || 'personal';
@@ -706,5 +706,12 @@ export default function CreateBillPersonalPage() {
         </div>
       </div>
     </div>
+  );
+}
+export default function CreatePercentPage() {
+  return (
+    <Suspense fallback={<div className="min-h-screen bg-[#fbf7f1]" />}>
+      <CreateBillPersonalPageInner />
+    </Suspense>
   );
 }
