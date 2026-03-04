@@ -73,7 +73,7 @@ export async function POST(request: Request) {
       const e = ev as LineEventFollow;
       await replyText(
         e.replyToken,
-        "สวัสดีครับ 👋\nเพื่อรับแจ้งเตือน Smart Bill:\n1) ไปที่เว็บ > Settings > เชื่อม LINE\n2) คัดลอกรหัส 6 หลัก\n3) กลับมาพิมพ์: LINK 123456"
+        "สวัสดีครับ 👋\nเพื่อรับแจ้งเตือน Smart Bill:\n1) ไปที่เว็บ > Settings > เชื่อม LINE\n2) คัดลอกรหัส 6 หลัก\n3) กลับมาพิมพ์: LINK 123456 \n https://smart-bill-sharing.vercel.app/dashboard"
       );
       continue;
     }

@@ -9,6 +9,7 @@ import {
   UserCircleIcon,
   UserIcon,
 } from '@heroicons/react/24/outline';
+import { ClipboardIcon, CheckIcon } from '@heroicons/react/24/outline';
 
 
 type TabKey = 'profile' | 'password' | 'notifications';
@@ -34,6 +35,7 @@ type ProfileGetResponse = ProfileGetOk | ProfileGetErr;
 
 
 
+
 export default function SettingsPage() {
   const { data: session } = useSession();
   const userName = session?.user?.name ?? 'User';
@@ -41,9 +43,9 @@ export default function SettingsPage() {
 
   const [tab, setTab] = useState<TabKey>('profile');
 
- 
 
- 
+
+
 
   return (
     <div className="min-h-screen bg-[#fbf7f1]">
@@ -80,7 +82,7 @@ export default function SettingsPage() {
               </div>
             </div>
 
-          
+
 
             {/* Settings menu */}
             <div className="bg-white rounded-2xl border border-black/5 shadow-sm p-3">
@@ -239,7 +241,7 @@ function ChangePasswordCard() {
           <label className="text-sm font-semibold text-gray-900 ml-1">Confirm New Password</label>
           <input
             type="password"
-            className={inputClass} 
+            className={inputClass}
             value={confirm}
             onChange={(e) => setConfirm(e.target.value)}
             placeholder="พิมพ์อีกครั้ง"
@@ -292,7 +294,7 @@ function AccountInfoCard() {
     'w-full px-4 py-3 rounded-xl text-gray-900 border border-gray-400 bg-gray-50/50 transition-all duration-200 outline-none ' +
     'focus:border-[#fb8c00] focus:ring-4 focus:ring-orange-100 focus:bg-white text-sm';
 
-    const inputClass2 =
+  const inputClass2 =
     'w-full px-4 py-3 rounded-xl text-gray-300 border border-gray-200 bg-gray-50/50 transition-all duration-200 outline-none ' +
     'focus:border-[#fb8c00] focus:ring-4 focus:ring-orange-100 focus:bg-white text-sm';
 
@@ -425,7 +427,7 @@ function AccountInfoCard() {
 
           <div className="space-y-2">
             <label className="text-sm font-semibold text-gray-700 ml-1">PromptPay Phone (10 digits)</label>
-            <input  
+            <input
               className={inputClass}
               value={promptPayPhone}
               maxLength={10}
@@ -488,15 +490,34 @@ function NotificationsCard() {
   type GetRes = { ok: true; settings: Settings } | { ok: false; message: string };
   type PatchRes = { ok: boolean; message?: string };
 
+  type LineCodeRes = { ok: true; code: string; expiresAt: string } | { ok: false; message: string };
+
+  type LineStatusRes =
+    | { ok: true; linked: boolean; lineNotifyEnabled: boolean; linkedAt: string | null }
+    | { ok: false; message: string };
+
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [msg, setMsg] = useState<{ type: 'ok' | 'err'; text: string } | null>(null);
+
   const [s, setS] = useState<Settings>({
     enabledTypes: [],
     dailySummaryEnabled: true,
     dailySummaryHour: 9,
     followGroupIds: [],
   });
+
+  // ✅ LINE states
+  const [lineLoading, setLineLoading] = useState(false);
+  const [lineErr, setLineErr] = useState<string | null>(null);
+  const [lineCode, setLineCode] = useState<string | null>(null);
+  const [lineExpiresAt, setLineExpiresAt] = useState<string | null>(null);
+
+  const [lineLinked, setLineLinked] = useState(false);
+  const [lineChecked, setLineChecked] = useState(false);
+  const [linkedAt, setLinkedAt] = useState<string | null>(null);
+
+  const [copied, setCopied] = useState(false);
 
   const TYPES: Array<{ key: NotificationType; label: string; desc: string }> = [
     { key: 'BILL_ADDED_YOU', label: 'Added to bill', desc: 'ถูกเพิ่มเข้าบิลใหม่' },
@@ -509,19 +530,48 @@ function NotificationsCard() {
     { key: 'GROUP_NEW_BILL', label: 'New bill in followed group', desc: 'มีบิลใหม่ในกลุ่มที่ติดตาม' },
   ];
 
+  const formatTH = (iso: string) =>
+    new Intl.DateTimeFormat('th-TH', { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(iso));
+
+  const loadLineStatus = async () => {
+    try {
+      const res = await fetch('/api/line/status', { method: 'GET' });
+      const data = (await res.json()) as LineStatusRes;
+
+      if (res.ok && data.ok) {
+        setLineLinked(data.linked);
+        setLinkedAt(data.linkedAt ?? null);
+
+        // ✅ ถ้าเชื่อมแล้ว ให้ล้างโค้ดที่ค้างอยู่
+        if (data.linked) {
+          setLineErr(null);
+          setLineCode(null);
+          setLineExpiresAt(null);
+        }
+      }
+    } finally {
+      setLineChecked(true);
+    }
+  };
+
   useEffect(() => {
     let alive = true;
+
     (async () => {
       try {
         setLoading(true);
+
         const res = await fetch('/api/notifications/settings');
         const data = (await res.json()) as GetRes;
+
+        await loadLineStatus();
         if (!alive) return;
 
         if (!res.ok || !data.ok) {
           setMsg({ type: 'err', text: !data.ok ? data.message : 'โหลดไม่สำเร็จ' });
           return;
         }
+
         setS(data.settings);
       } catch {
         if (!alive) return;
@@ -531,10 +581,23 @@ function NotificationsCard() {
         setLoading(false);
       }
     })();
+
     return () => {
       alive = false;
     };
   }, []);
+
+  // ✅ ถ้ามี code และยังไม่ linked: polling เช็คสถานะทุก 4 วิ (พอ user ไปพิมพ์ใน LINE แล้วหน้าเว็บจะอัปเดตเอง)
+  useEffect(() => {
+    if (!lineCode) return;
+    if (lineLinked) return;
+
+    const t = setInterval(() => {
+      loadLineStatus();
+    }, 4000);
+
+    return () => clearInterval(t);
+  }, [lineCode, lineLinked]);
 
   const toggleType = (t: NotificationType) => {
     setS((prev) => {
@@ -566,6 +629,43 @@ function NotificationsCard() {
     }
   };
 
+  const requestLineCode = async () => {
+    setLineLoading(true);
+    setLineErr(null);
+
+    try {
+      // ✅ แก้ endpoint ให้ตรงกับของคุณ
+      // ถ้าโปรเจกต์คุณใช้ /api/line/link-code ให้เปลี่ยนบรรทัดนี้
+      const res = await fetch('/api/line/link-code', { method: 'POST' });
+      const data = (await res.json()) as LineCodeRes;
+
+      if (!res.ok || !data.ok) {
+        setLineCode(null);
+        setLineExpiresAt(null);
+        setLineErr(!data.ok ? data.message : 'ขอรหัสไม่สำเร็จ');
+        return;
+      }
+
+      setLineCode(data.code);
+      setLineExpiresAt(data.expiresAt);
+
+      // ✅ หลังขอรหัส ลองเช็คสถานะ 1 ครั้ง
+      await loadLineStatus();
+    } catch {
+      setLineErr('เชื่อมต่อเซิร์ฟเวอร์ไม่ได้');
+    } finally {
+      setLineLoading(false);
+    }
+  };
+
+  const copyLineCommand = async () => {
+    if (!lineCode) return;
+    await navigator.clipboard.writeText(`LINK ${lineCode}`);
+    setCopied(true);
+    setMsg({ type: 'ok', text: `คัดลอกแล้ว: LINK ${lineCode}` });
+    setTimeout(() => setCopied(false), 1500);
+  };
+
   return (
     <div>
       <div className="font-semibold text-gray-900">Manage Notifications</div>
@@ -575,6 +675,101 @@ function NotificationsCard() {
         <div className="mt-5 text-sm text-gray-500">Loading...</div>
       ) : (
         <div className="mt-6 space-y-4 max-w-2xl">
+          {/* ✅ LINE OA Link */}
+          <div className="rounded-xl border border-green-200 bg-green-50 p-4">
+            <div className="flex items-start justify-between gap-4">
+              <div>
+                <div className="text-sm font-semibold text-green-900">เชื่อม LINE OA เพื่อรับแจ้งเตือน</div>
+
+                {lineChecked && lineLinked ? (
+                  <div className="text-xs text-green-700 mt-1">
+                    ✅ เชื่อมต่อแล้ว {linkedAt ? `(${formatTH(linkedAt)})` : ''}
+                    <div className="mt-1">ระบบจะส่งแจ้งเตือนบิลมาที่ LINE นี้อัตโนมัติ</div>
+                  </div>
+                ) : (
+                  <div className="text-xs text-green-700 mt-1">
+                    กดขอรหัส แล้วไปพิมพ์ใน LINE OA: <b>LINK xxxxxx</b>
+                  </div>
+                )}
+              </div>
+
+              {/* ปุ่มขอรหัส/รีเฟรช */}
+              {lineChecked && lineLinked ? (
+                <button
+                  type="button"
+                  onClick={loadLineStatus}
+                  className="px-4 py-2 rounded-xl font-bold border border-green-200 bg-white text-green-800 hover:bg-green-100 transition"
+                >
+                  รีเฟรช
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  onClick={requestLineCode}
+                  disabled={lineLoading}
+                  className={[
+                    'px-4 py-2 rounded-xl font-bold text-white transition',
+                    'bg-[linear-gradient(135deg,#16a34a_0%,#22c55e_100%)]',
+                    'shadow-md shadow-green-200 hover:shadow-green-300 hover:-translate-y-0.5 active:scale-[0.98]',
+                    lineLoading ? 'opacity-60 cursor-not-allowed hover:translate-y-0' : '',
+                  ].join(' ')}
+                >
+                  {lineLoading ? 'กำลังขอรหัส...' : 'ขอรหัส LINE'}
+                </button>
+              )}
+            </div>
+
+            {lineErr && (
+              <div className="mt-3 rounded-xl border border-red-100 bg-red-50 px-4 py-3 text-sm font-medium text-red-600">
+                ❌ {lineErr}
+              </div>
+            )}
+
+            {/* ถ้ายังไม่เชื่อม และมี code ให้โชว์ */}
+            {!lineLinked && lineCode && lineExpiresAt && (
+              <div className="mt-4">
+                <div className="text-xs text-green-800">รหัสของคุณ (หมดอายุ: {formatTH(lineExpiresAt)})</div>
+
+                <div className="mt-2 flex flex-wrap items-center gap-3">
+                  <div className="px-4 py-2 rounded-xl bg-white border border-green-200 text-2xl font-extrabold tracking-[0.35em] text-green-900">
+                    {lineCode}
+                  </div>
+
+                  <button
+                    type="button"
+                    onClick={copyLineCommand}
+                    className={[
+                      'inline-flex items-center gap-2 px-4 py-2 rounded-xl font-bold transition',
+                      'border border-green-600 bg-green-900 text-black-800',
+                      'hover:bg-green-100 active:scale-[0.98]',
+                      'shadow-sm',
+                    ].join(' ')}
+                  >
+                    {copied ? (
+                      <>
+                        <CheckIcon className="h-5 w-5" />
+                        คัดลอกแล้ว
+                      </>
+                    ) : (
+                      <>
+                        <ClipboardIcon className="h-5 w-5" />
+                        คัดลอก
+                      </>
+                    )}
+                  </button>
+
+              
+                </div>
+
+                <div className="mt-3 text-xs text-green-700 leading-relaxed">
+                  ไปที่แชท LINE OA แล้วพิมพ์: <b>LINK {lineCode}</b>
+                  <br />
+                  * หลังพิมพ์สำเร็จ หน้านี้จะอัปเดตเป็น “เชื่อมต่อแล้ว” อัตโนมัติ
+                </div>
+              </div>
+            )}
+          </div>
+
           {/* Daily summary */}
           <div className="rounded-xl border border-black/5 bg-gray-50 p-4">
             <div className="flex items-center justify-between">
@@ -632,9 +827,7 @@ function NotificationsCard() {
                     <div className="text-sm font-semibold text-gray-900">{t.label}</div>
                     <div className="text-xs text-gray-500 mt-1">{t.desc}</div>
                   </div>
-                  <span className={on ? 'text-[#fb8c00] font-bold' : 'text-gray-400 font-semibold'}>
-                    {on ? 'ON' : 'OFF'}
-                  </span>
+                  <span className={on ? 'text-[#fb8c00] font-bold' : 'text-gray-400 font-semibold'}>{on ? 'ON' : 'OFF'}</span>
                 </button>
               );
             })}
