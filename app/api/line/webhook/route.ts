@@ -42,6 +42,9 @@ function parseLinkCommand(text: string): string | null {
     t.match(/^เชื่อมบัญชี\s*(\d{6})$/);
   return m?.[1] ?? null;
 }
+export async function GET() {
+  return Response.json({ ok: true, message: "LINE webhook is up" });
+}
 
 export async function POST(request: Request) {
   // ต้องอ่าน raw ก่อน แล้ว verify signature
