@@ -317,7 +317,7 @@ export async function notifyBillClosed(params: { billId: ObjectIdLike }) {
 
       await pushToUserLine(
         uid.toString(),
-        `✅ บิลปิดแล้ว (ทุกคนจ่ายครบ)\n\n${detail}\n\n(ดูในเว็บ: ${billUrl(billId)})`
+        `✅ บิลปิดแล้ว (ทุกคนจ่ายครบ)\n\n${detail}\n\n(ดูในเว็บ: https://smart-bill-sharing.vercel.app)`
       );
     }
   }
