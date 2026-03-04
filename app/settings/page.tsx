@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { ReactNode,useEffect, useState } from 'react';
 import { useSession } from 'next-auth/react';
 import {
   BellIcon,
@@ -91,19 +91,23 @@ export default function SettingsPage() {
               <MenuItem
                 active={tab === 'password'}
                 icon={<KeyIcon className="h-5 w-5" />}
-                title="Change Password"
+                title="เปลี่ยนรหัสผ่าน"
                 onClick={() => setTab('password')}
               />
               <MenuItem
                 active={tab === 'profile'}
                 icon={<UserIcon className="h-5 w-5" />}
-                title="Account Info"
+                title="จัดการบัญชีผู้ใช้"
                 onClick={() => setTab('profile')}
               />
               <MenuItem
                 active={tab === 'notifications'}
                 icon={<BellIcon className="h-5 w-5" />}
-                title="Manage Notifications"
+                title={
+    <span className="inline-flex items-center gap-1">
+      จัดการแจ้งเตือน <span className="text-green-600">(LINE)</span>
+    </span>
+  }
                 onClick={() => setTab('notifications')}
               />
             </div>
@@ -131,7 +135,7 @@ function MenuItem({
 }: {
   active: boolean;
   icon: React.ReactNode;
-  title: string;
+  title: ReactNode;
   onClick: () => void;
 }) {
   return (

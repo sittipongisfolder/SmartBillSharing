@@ -9,6 +9,7 @@ import {
   ClockIcon,
   UserIcon,
   ReceiptPercentIcon,
+  LinkIcon,
 } from '@heroicons/react/24/outline';
 import { useSession, signOut } from 'next-auth/react';
 import Link from 'next/link';
@@ -100,7 +101,13 @@ export default function UserDropdown() {
                   className="flex items-center px-4 py-3 text-sm font-medium text-gray-700 hover:bg-gray-100 hover:text-gray-900 transition"
                 >
                   <UserIcon className="h-5 w-5 mr-3 text-gray-500" />
-                  ศูนย์ผู้ใช้งาน & การตั้งค่า
+                  ศูนย์ผู้ใช้งาน &amp; การตั้งค่า{' '}
+                  <span className="inline-flex items-center gap-1 text-green-600">
+                    
+                    <LinkIcon className="h-4 w-4 text-green-600" />
+                    LINE
+                    
+                  </span>
                 </Link>
               </Menu.Item>
 
