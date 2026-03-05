@@ -100,6 +100,7 @@ async function createOnce(args: {
   message: string;
   billId?: mongoose.Types.ObjectId;
   meta?: { unpaidCount?: number; totalOwed?: number; maxOverdueDays?: number };
+  dedupe?: boolean;
 }): Promise<boolean> {
   const { userId, type, billId } = args;
 
@@ -169,6 +170,7 @@ export async function notifyBillAddedYou(params: { billId: ObjectIdLike; actorUs
       title: 'คุณถูกเพิ่มเข้าบิลใหม่',
       message: `คุณถูกเพิ่มเข้าบิล "${bill.title}"`,
       billId, // ✅ สำคัญ: ใส่ billId ไม่งั้น createOnce กันซ้ำไม่ได้
+      dedupe: true, // ✅ กันซ้ำแบบง่าย: type+user+bill ซ้ำไม่สร้างซ้ำ 
     });
 
     if (created) {
@@ -208,6 +210,7 @@ export async function notifyBillUpdated(params: { billId: ObjectIdLike; actorUse
       title: 'บิลมีการแก้ไข',
       message: msgWeb,
       billId,
+      dedupe:false,
     });
 
     if (created) {
@@ -249,6 +252,7 @@ export async function notifyBillStatusChanged(params: {
       title: 'สถานะของคุณเปลี่ยน',
       message: msgWeb,
       billId,
+      dedupe: false,
     });
 
     if (created) {
@@ -310,6 +314,7 @@ export async function notifyBillClosed(params: { billId: ObjectIdLike }) {
       title: 'บิลปิดแล้ว',
       message: `บิล "${bill.title}" ปิดแล้ว (ทุกคนจ่ายครบ)`,
       billId,
+      dedupe: true, // กันซ้ำแบบง่าย: type+user+bill ซ้ำไม่สร้างซ้ำ
     });
 
     if (created) {
