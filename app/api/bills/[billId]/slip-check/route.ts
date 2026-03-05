@@ -8,6 +8,7 @@ import type { HydratedDocument } from "mongoose";
 import { cloudinary } from "@/lib/cloudinary";
 import { Readable } from "stream";
 import type { UploadApiResponse, UploadApiErrorResponse } from "cloudinary";
+import { notifyBillStatusChanged, notifyBillClosed } from "@/lib/notify";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -122,11 +123,15 @@ async function uploadSlipToCloudinary(args: {
         resource_type: "image",
         overwrite: true,
       },
-      (error: UploadApiErrorResponse | undefined, res: UploadApiResponse | undefined) => {
+      (
+        error: UploadApiErrorResponse | undefined,
+        res: UploadApiResponse | undefined,
+      ) => {
         if (error) return reject(error);
-        if (!res) return reject(new Error("Cloudinary upload failed: empty response"));
+        if (!res)
+          return reject(new Error("Cloudinary upload failed: empty response"));
         resolve(res);
-      }
+      },
     );
 
     bufferToStream(buffer).pipe(upload);
@@ -196,7 +201,9 @@ function looseNameMatch(ownerName?: string, receiverName?: string): boolean {
       .filter((t) => t.length >= 2) ?? [];
 
   return (
-    tokens.some((t) => normalizeName(receiverName ?? "").includes(normalizeName(t))) ||
+    tokens.some((t) =>
+      normalizeName(receiverName ?? "").includes(normalizeName(t)),
+    ) ||
     b.includes(a) ||
     a.includes(b)
   );
@@ -205,9 +212,11 @@ function looseNameMatch(ownerName?: string, receiverName?: string): boolean {
 /** ✅ billStatus hybrid: ดูเฉพาะลูกบิล (ไม่นับหัวบิล) */
 function computeBillStatusHybrid(
   participants: ReadonlyArray<Pick<ParticipantDoc, "userId" | "paymentStatus">>,
-  ownerId: string
+  ownerId: string,
 ): BillStatus {
-  const others = participants.filter((p) => toIdString(p.userId) !== String(ownerId));
+  const others = participants.filter(
+    (p) => toIdString(p.userId) !== String(ownerId),
+  );
   if (others.length === 0) return "paid";
 
   const paidCount = others.filter((p) => p.paymentStatus === "paid").length;
@@ -219,7 +228,10 @@ function computeBillStatusHybrid(
 function hasUserId(user: unknown): user is { id: string } {
   if (!isObject(user)) return false;
   if (!("id" in user)) return false;
-  return typeof (user as { id?: unknown }).id === "string" && ((user as { id?: string }).id ?? "").length > 0;
+  return (
+    typeof (user as { id?: unknown }).id === "string" &&
+    ((user as { id?: string }).id ?? "").length > 0
+  );
 }
 
 function getUserIdFromSession(session: Session | null): string | null {
@@ -240,32 +252,55 @@ type SlipOkNormalized = {
 };
 
 function normalizeSlipOk(json: unknown): SlipOkNormalized {
-  const base: SlipOkNormalized = { ok: false, message: "Invalid SlipOK response" };
+  const base: SlipOkNormalized = {
+    ok: false,
+    message: "Invalid SlipOK response",
+  };
   if (!isObject(json)) return base;
 
-  const successTop = typeof (json as Record<string, unknown>).success === "boolean"
-    ? ((json as Record<string, unknown>).success as boolean)
-    : undefined;
+  const successTop =
+    typeof (json as Record<string, unknown>).success === "boolean"
+      ? ((json as Record<string, unknown>).success as boolean)
+      : undefined;
 
-  const messageTop = typeof (json as Record<string, unknown>).message === "string"
-    ? ((json as Record<string, unknown>).message as string)
-    : undefined;
+  const messageTop =
+    typeof (json as Record<string, unknown>).message === "string"
+      ? ((json as Record<string, unknown>).message as string)
+      : undefined;
 
   const data = isObject((json as Record<string, unknown>).data)
     ? ((json as Record<string, unknown>).data as Record<string, unknown>)
     : null;
 
-  const successData = data && typeof data.success === "boolean" ? (data.success as boolean) : undefined;
-  const messageData = data && typeof data.message === "string" ? (data.message as string) : undefined;
+  const successData =
+    data && typeof data.success === "boolean"
+      ? (data.success as boolean)
+      : undefined;
+  const messageData =
+    data && typeof data.message === "string"
+      ? (data.message as string)
+      : undefined;
 
   const ok = Boolean(successTop) && Boolean(successData);
   const message = messageData ?? messageTop ?? base.message;
 
-  const transRef = data && typeof data.transRef === "string" ? (data.transRef as string) : undefined;
-  const transTimestamp = data && typeof data.transTimestamp === "string" ? (data.transTimestamp as string) : undefined;
-  const amount = data && typeof data.amount === "number" ? (data.amount as number) : undefined;
+  const transRef =
+    data && typeof data.transRef === "string"
+      ? (data.transRef as string)
+      : undefined;
+  const transTimestamp =
+    data && typeof data.transTimestamp === "string"
+      ? (data.transTimestamp as string)
+      : undefined;
+  const amount =
+    data && typeof data.amount === "number"
+      ? (data.amount as number)
+      : undefined;
 
-  const receiverObj = data && isObject(data.receiver) ? (data.receiver as Record<string, unknown>) : null;
+  const receiverObj =
+    data && isObject(data.receiver)
+      ? (data.receiver as Record<string, unknown>)
+      : null;
   const receiverName =
     receiverObj && typeof receiverObj.displayName === "string"
       ? (receiverObj.displayName as string)
@@ -273,27 +308,58 @@ function normalizeSlipOk(json: unknown): SlipOkNormalized {
         ? (receiverObj.name as string)
         : undefined;
 
-  const proxyObj = receiverObj && isObject(receiverObj.proxy) ? (receiverObj.proxy as Record<string, unknown>) : null;
-  const receiverProxy = proxyObj && typeof proxyObj.value === "string" ? (proxyObj.value as string) : undefined;
+  const proxyObj =
+    receiverObj && isObject(receiverObj.proxy)
+      ? (receiverObj.proxy as Record<string, unknown>)
+      : null;
+  const receiverProxy =
+    proxyObj && typeof proxyObj.value === "string"
+      ? (proxyObj.value as string)
+      : undefined;
 
-  const accountObj = receiverObj && isObject(receiverObj.account) ? (receiverObj.account as Record<string, unknown>) : null;
-  const receiverAccount = accountObj && typeof accountObj.value === "string" ? (accountObj.value as string) : undefined;
+  const accountObj =
+    receiverObj && isObject(receiverObj.account)
+      ? (receiverObj.account as Record<string, unknown>)
+      : null;
+  const receiverAccount =
+    accountObj && typeof accountObj.value === "string"
+      ? (accountObj.value as string)
+      : undefined;
 
-  return { ok, message, transRef, transTimestamp, amount, receiverName, receiverProxy, receiverAccount };
+  return {
+    ok,
+    message,
+    transRef,
+    transTimestamp,
+    amount,
+    receiverName,
+    receiverProxy,
+    receiverAccount,
+  };
 }
 
-async function slipokCheckSlip(args: { file: File; amount?: number }): Promise<SlipOkNormalized> {
+async function slipokCheckSlip(args: {
+  file: File;
+  amount?: number;
+}): Promise<SlipOkNormalized> {
   const branchId = process.env.SLIPOK_BRANCH_ID;
   const apiKey = process.env.SLIPOK_API_KEY;
 
   if (!branchId || !apiKey) {
-    return { ok: false, message: "Missing SLIPOK env (SLIPOK_BRANCH_ID / SLIPOK_API_KEY)" };
+    return {
+      ok: false,
+      message: "Missing SLIPOK env (SLIPOK_BRANCH_ID / SLIPOK_API_KEY)",
+    };
   }
 
   const fd = new FormData();
   fd.append("files", args.file, args.file.name);
 
-  if (typeof args.amount === "number" && Number.isFinite(args.amount) && args.amount > 0) {
+  if (
+    typeof args.amount === "number" &&
+    Number.isFinite(args.amount) &&
+    args.amount > 0
+  ) {
     fd.append("amount", String(args.amount));
   }
 
@@ -314,7 +380,10 @@ async function slipokCheckSlip(args: { file: File; amount?: number }): Promise<S
 
   const normalized = normalizeSlipOk(json);
   if (!res.ok) {
-    return { ok: false, message: `SlipOK: HTTP ${res.status} - ${normalized.message}` };
+    return {
+      ok: false,
+      message: `SlipOK: HTTP ${res.status} - ${normalized.message}`,
+    };
   }
   return normalized;
 }
@@ -322,20 +391,27 @@ async function slipokCheckSlip(args: { file: File; amount?: number }): Promise<S
 // ---------- ✅ กันสลิปซ้ำด้วย transRef ----------
 type DupHit = { billId: string; userId: string };
 
-async function findDuplicateSlipReference(reference: string): Promise<DupHit | null> {
+async function findDuplicateSlipReference(
+  reference: string,
+): Promise<DupHit | null> {
   const doc = await Bill.findOne(
     { participants: { $elemMatch: { "slipInfo.reference": reference } } },
-    { _id: 1, participants: 1 }
+    { _id: 1, participants: 1 },
   ).lean();
 
   if (!doc) return null;
 
   const d = doc as unknown as {
     _id: IdLike;
-    participants?: Array<{ userId?: IdLike; slipInfo?: { reference?: string } }>;
+    participants?: Array<{
+      userId?: IdLike;
+      slipInfo?: { reference?: string };
+    }>;
   };
 
-  const hit = (d.participants ?? []).find((p) => (p.slipInfo?.reference ?? "") === reference);
+  const hit = (d.participants ?? []).find(
+    (p) => (p.slipInfo?.reference ?? "") === reference,
+  );
 
   return {
     billId: toIdString(d._id),
@@ -352,7 +428,10 @@ export async function POST(req: NextRequest, { params }: RouteCtx) {
     const sessionUserId = getUserIdFromSession(session);
 
     if (!sessionUserId) {
-      return NextResponse.json<SlipCheckResponse>({ ok: false, message: "Unauthorized" }, { status: 401 });
+      return NextResponse.json<SlipCheckResponse>(
+        { ok: false, message: "Unauthorized" },
+        { status: 401 },
+      );
     }
 
     const { billId } = await params;
@@ -363,7 +442,7 @@ export async function POST(req: NextRequest, { params }: RouteCtx) {
     if (!(fileValue instanceof File)) {
       return NextResponse.json<SlipCheckResponse>(
         { ok: false, message: "Missing file (field name: file)" },
-        { status: 400 }
+        { status: 400 },
       );
     }
 
@@ -371,29 +450,38 @@ export async function POST(req: NextRequest, { params }: RouteCtx) {
 
     const autoPaidRaw = form.get("autoPaid");
     const autoPaid =
-      autoPaidRaw === null || autoPaidRaw === undefined ? true : String(autoPaidRaw) === "true";
+      autoPaidRaw === null || autoPaidRaw === undefined
+        ? true
+        : String(autoPaidRaw) === "true";
 
     const userIdValue = form.get("userId");
     const targetUserId =
-      typeof userIdValue === "string" && userIdValue.trim().length > 0 ? userIdValue.trim() : sessionUserId;
+      typeof userIdValue === "string" && userIdValue.trim().length > 0
+        ? userIdValue.trim()
+        : sessionUserId;
 
     await connectMongoDB();
 
     const billDocRaw = await Bill.findById(billId).populate(
       "createdBy",
-      "name bank bankAccountNumber promptPayPhone"
+      "name bank bankAccountNumber promptPayPhone",
     );
     const billDoc = billDocRaw as unknown as BillHydrated | null;
 
     if (!billDoc) {
-      return NextResponse.json<SlipCheckResponse>({ ok: false, message: "Bill not found" }, { status: 404 });
+      return NextResponse.json<SlipCheckResponse>(
+        { ok: false, message: "Bill not found" },
+        { status: 404 },
+      );
     }
 
     const ownerId = isOwnerPopulated(billDoc.createdBy)
       ? toIdString(billDoc.createdBy._id)
       : toIdString(billDoc.createdBy);
 
-    const ownerObj = isOwnerPopulated(billDoc.createdBy) ? billDoc.createdBy : null;
+    const ownerObj = isOwnerPopulated(billDoc.createdBy)
+      ? billDoc.createdBy
+      : null;
 
     const ownerName = (ownerObj?.name ?? "").trim();
     const ownerPhone = digitsOnly(ownerObj?.promptPayPhone);
@@ -404,14 +492,19 @@ export async function POST(req: NextRequest, { params }: RouteCtx) {
 
     // ✅ สิทธิ์: จ่ายเองได้ / owner อัปเดตแทนคนอื่นได้
     if (!isSelf && !isOwner) {
-      return NextResponse.json<SlipCheckResponse>({ ok: false, message: "Forbidden" }, { status: 403 });
+      return NextResponse.json<SlipCheckResponse>(
+        { ok: false, message: "Forbidden" },
+        { status: 403 },
+      );
     }
 
-    const idx = billDoc.participants.findIndex((p) => toIdString(p.userId) === String(targetUserId));
+    const idx = billDoc.participants.findIndex(
+      (p) => toIdString(p.userId) === String(targetUserId),
+    );
     if (idx === -1) {
       return NextResponse.json<SlipCheckResponse>(
         { ok: false, message: "Participant not found in this bill" },
-        { status: 404 }
+        { status: 404 },
       );
     }
 
@@ -426,15 +519,19 @@ export async function POST(req: NextRequest, { params }: RouteCtx) {
     if (!slip.ok) {
       return NextResponse.json<SlipCheckResponse>(
         { ok: false, message: `SlipOK: ${slip.message}` },
-        { status: 400 }
+        { status: 400 },
       );
     }
 
     const transRef = (slip.transRef ?? "").trim();
     if (!transRef) {
       return NextResponse.json<SlipCheckResponse>(
-        { ok: false, message: "SlipOK ไม่ส่ง transRef กลับมา (กันสลิปซ้ำไม่ได้) กรุณาลองใหม่/ใช้สลิปอื่น" },
-        { status: 400 }
+        {
+          ok: false,
+          message:
+            "SlipOK ไม่ส่ง transRef กลับมา (กันสลิปซ้ำไม่ได้) กรุณาลองใหม่/ใช้สลิปอื่น",
+        },
+        { status: 400 },
       );
     }
 
@@ -445,8 +542,11 @@ export async function POST(req: NextRequest, { params }: RouteCtx) {
 
     if (dup && !(sameBill && sameUser)) {
       return NextResponse.json<SlipCheckResponse>(
-        { ok: false, message: `สลิปนี้ถูกใช้ไปแล้ว (transRef: ${transRef}) ห้ามใช้สลิปซ้ำ` },
-        { status: 409 }
+        {
+          ok: false,
+          message: `สลิปนี้ถูกใช้ไปแล้ว (transRef: ${transRef}) ห้ามใช้สลิปซ้ำ`,
+        },
+        { status: 409 },
       );
     }
 
@@ -462,13 +562,22 @@ export async function POST(req: NextRequest, { params }: RouteCtx) {
     const qrValid = true;
 
     const receiverMatched =
-      (ownerPhone && slip.receiverProxy ? maskedMatch(slip.receiverProxy, ownerPhone) : false) ||
-      (ownerBankAcc && slip.receiverAccount ? maskedMatch(slip.receiverAccount, ownerBankAcc) : false);
+      (ownerPhone && slip.receiverProxy
+        ? maskedMatch(slip.receiverProxy, ownerPhone)
+        : false) ||
+      (ownerBankAcc && slip.receiverAccount
+        ? maskedMatch(slip.receiverAccount, ownerBankAcc)
+        : false);
 
-    const nameMatched = ownerName && slip.receiverName ? looseNameMatch(ownerName, slip.receiverName) : false;
+    const nameMatched =
+      ownerName && slip.receiverName
+        ? looseNameMatch(ownerName, slip.receiverName)
+        : false;
 
     const amountMatched =
-      typeof slip.amount === "number" && expectedAmount > 0 ? slip.amount >= expectedAmount - 0.01 : true;
+      typeof slip.amount === "number" && expectedAmount > 0
+        ? slip.amount >= expectedAmount - 0.01
+        : true;
 
     const verified = qrValid && receiverMatched && amountMatched;
 
@@ -482,23 +591,63 @@ export async function POST(req: NextRequest, { params }: RouteCtx) {
       verified,
     };
 
-    const nextParticipantStatus: ParticipantStatus = verified && autoPaid ? "paid" : "unpaid";
+    const nextParticipantStatus: ParticipantStatus =
+      verified && autoPaid ? "paid" : "unpaid";
+    const prevParticipantStatus = billDoc.participants[idx].paymentStatus;
+    const prevBillStatus = billDoc.billStatus;
 
     billDoc.participants[idx].slipInfo = slipInfoDb;
     billDoc.participants[idx].paymentStatus = nextParticipantStatus;
 
-    if (nextParticipantStatus === "paid") billDoc.participants[idx].paidAt = new Date();
+    if (nextParticipantStatus === "paid")
+      billDoc.participants[idx].paidAt = new Date();
     else billDoc.participants[idx].paidAt = undefined;
 
     billDoc.billStatus = computeBillStatusHybrid(billDoc.participants, ownerId);
     await billDoc.save();
 
+    
+
     if (!verified) {
-      const reason = !receiverMatched ? "ผู้รับไม่ตรงหัวบิล" : !amountMatched ? "ยอดเงินไม่ตรง" : "ไม่ผ่านเงื่อนไข";
+      const reason = !receiverMatched
+        ? "ผู้รับไม่ตรงหัวบิล"
+        : !amountMatched
+          ? "ยอดเงินไม่ตรง"
+          : "ไม่ผ่านเงื่อนไข";
       return NextResponse.json<SlipCheckResponse>(
         { ok: false, message: `SlipOK: ${slip.message} (${reason})` },
-        { status: 422 }
+        { status: 422 },
       );
+    }
+
+    // ✅ แจ้งเตือนเมื่อสถานะเปลี่ยน (เว็บ + LINE)
+    try {
+      const nextBillStatus = billDoc.billStatus;
+      const nextStatus = billDoc.participants[idx].paymentStatus;
+
+      if (verified) {
+        const action =
+          autoPaid && nextStatus === "paid" ? "paid" : "slip_uploaded";
+
+        // แจ้งเมื่อสถานะเปลี่ยนจริง (unpaid -> paid) หรือเป็นกรณี slip_uploaded
+        if (
+          prevParticipantStatus !== nextStatus ||
+          action === "slip_uploaded"
+        ) {
+          await notifyBillStatusChanged({
+            billId,
+            targetUserId,
+            actorUserId: sessionUserId,
+            action,
+          });
+        }
+      }
+
+      if (prevBillStatus !== "paid" && nextBillStatus === "paid") {
+        await notifyBillClosed({ billId });
+      }
+    } catch (err) {
+      console.error("⚠️ notify (slip-check) failed:", err);
     }
 
     const updated = billDoc.participants[idx];
@@ -509,7 +658,13 @@ export async function POST(req: NextRequest, { params }: RouteCtx) {
       message: `โอนเงินสำเร็จ (ตรวจสอบผ่าน SlipOK แล้ว)`,
       billId: billIdStr,
       billStatus: billDoc.billStatus,
-      checks: { qrValid, receiverMatched, nameMatched, amountMatched, duplicate: Boolean(dup) },
+      checks: {
+        qrValid,
+        receiverMatched,
+        nameMatched,
+        amountMatched,
+        duplicate: Boolean(dup),
+      },
       slipok: {
         receiverName: slip.receiverName,
         receiverProxy: slip.receiverProxy,
@@ -536,6 +691,9 @@ export async function POST(req: NextRequest, { params }: RouteCtx) {
     });
   } catch (e: unknown) {
     const message = e instanceof Error ? e.message : "Internal Server Error";
-    return NextResponse.json<SlipCheckResponse>({ ok: false, message }, { status: 500 });
+    return NextResponse.json<SlipCheckResponse>(
+      { ok: false, message },
+      { status: 500 },
+    );
   }
 }

@@ -102,10 +102,10 @@ async function createOnce(args: {
   meta?: { unpaidCount?: number; totalOwed?: number; maxOverdueDays?: number };
   dedupe?: boolean;
 }): Promise<boolean> {
-  const { userId, type, billId } = args;
+  const { userId, type, billId, dedupe = true } = args;
 
-  // กันยิงซ้ำแบบง่าย: type+user+bill ซ้ำไม่สร้างซ้ำ
-  if (billId) {
+  // ✅ กันยิงซ้ำเฉพาะเมื่อ dedupe=true
+  if (dedupe && billId) {
     const exists = await Notification.findOne({ userId, type, billId }).select('_id').lean();
     if (exists) return false;
   }
@@ -281,6 +281,7 @@ export async function notifyBillStatusChanged(params: {
       title: 'อัปเดตสถานะในบิล',
       message: msgWeb,
       billId,
+      dedupe: false,
     });
 
     if (created) {
