@@ -3,8 +3,8 @@ import mongoose, { Schema, Document, Model } from "mongoose";
 type UserRole = "user" | "admin";
 
 type LineInfo = {
-  userId: string | null;     // LINE userId ที่ได้จาก webhook
-  linkedAt: Date | null;     // เวลาที่ผูกสำเร็จ
+  userId: string | null; // LINE userId ที่ได้จาก webhook
+  linkedAt: Date | null; // เวลาที่ผูกสำเร็จ
 };
 
 interface IUser extends Document {
@@ -62,20 +62,27 @@ const userSchema: Schema<IUser> = new Schema(
 
     // ✅ LINE OA link
     line: {
-      userId: { type: String, default: null },
-      linkedAt: { type: Date, default: null },
+      userId: { type: String }, // ❌ ไม่ต้อง default null
+      linkedAt: { type: Date }, // ❌ ไม่ต้อง default null
     },
 
-    // ✅ เปิด/ปิดแจ้งเตือน LINE
-    lineNotifyEnabled: { type: Boolean, default: true },
+    // ✅ เปิด/ปิดแจ้งเตือน LINE (ใช้กับ lineNotifyEnabled)
+    lineNotifyEnabled: { type: Boolean, default: false },
   },
-  { timestamps: true }
+  { timestamps: true },
 );
 
 // ✅ ทำ index ให้ line.userId เป็น unique แบบ sparse (กัน null ชนกัน)
-userSchema.index({ "line.userId": 1 }, { unique: true, sparse: true });
+userSchema.index(
+  { "line.userId": 1 },
+  {
+    unique: true,
+    partialFilterExpression: { "line.userId": { $type: "string" } },
+  }
+);
 
 // ✅ กันปัญหา hot-reload + ใช้ schema เดียว
-const User: Model<IUser> = mongoose.models.User || mongoose.model<IUser>("User", userSchema);
+const User: Model<IUser> =
+  mongoose.models.User || mongoose.model<IUser>("User", userSchema);
 
 export default User;

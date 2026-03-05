@@ -11,6 +11,22 @@ const compat = new FlatCompat({
 
 const eslintConfig = [
   ...compat.extends("next/core-web-vitals", "next/typescript"),
+
+  // ✅ อย่า lint rule นี้กับไฟล์ next-env.d.ts (Next สร้างมาให้เอง)
+  {
+    files: ["next-env.d.ts"],
+    rules: {
+      "@typescript-eslint/triple-slash-reference": "off",
+    },
+  },
+
+  // (ถ้าในอนาคตโดนพวก .next/types ด้วย) เปิดอันนี้ได้
+  // {
+  //   files: [".next/types/**/*.d.ts"],
+  //   rules: {
+  //     "@typescript-eslint/triple-slash-reference": "off",
+  //   },
+  // },
 ];
 
 export default eslintConfig;

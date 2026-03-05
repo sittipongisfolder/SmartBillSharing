@@ -173,7 +173,7 @@ export default function Register() {
                 className="absolute right-4 top-[44px] text-gray-400 hover:text-gray-600"
                 aria-label="toggle password"
               >
-                {showPassword ? <FaEyeSlash /> : <FaEye />}
+                {showPassword ? <FaEye /> : <FaEyeSlash />}
               </button>
             </div>
 
@@ -196,7 +196,7 @@ export default function Register() {
                 className="absolute right-4 top-[44px] text-gray-400 hover:text-gray-600"
                 aria-label="toggle confirm password"
               >
-                {showConfirmPassword ? <FaEyeSlash /> : <FaEye />}
+                {showConfirmPassword ? <FaEye /> : <FaEyeSlash />}
               </button>
             </div>
 

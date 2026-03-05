@@ -1,6 +1,6 @@
 'use client';
 
-import { ReactNode,useEffect, useState } from 'react';
+import { ReactNode, useEffect, useState, useCallback } from 'react';
 import { useSession } from 'next-auth/react';
 import {
   BellIcon,
@@ -104,10 +104,10 @@ export default function SettingsPage() {
                 active={tab === 'notifications'}
                 icon={<BellIcon className="h-5 w-5" />}
                 title={
-    <span className="inline-flex items-center gap-1">
-      จัดการแจ้งเตือน <span className="text-green-600">(LINE)</span>
-    </span>
-  }
+                  <span className="inline-flex items-center gap-1">
+                    จัดการแจ้งเตือน <span className="text-green-600">(LINE)</span>
+                  </span>
+                }
                 onClick={() => setTab('notifications')}
               />
             </div>
@@ -537,7 +537,7 @@ function NotificationsCard() {
   const formatTH = (iso: string) =>
     new Intl.DateTimeFormat('th-TH', { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(iso));
 
-  const loadLineStatus = async () => {
+  const loadLineStatus = useCallback(async () => {
     try {
       const res = await fetch('/api/line/status', { method: 'GET' });
       const data = (await res.json()) as LineStatusRes;
@@ -546,7 +546,6 @@ function NotificationsCard() {
         setLineLinked(data.linked);
         setLinkedAt(data.linkedAt ?? null);
 
-        // ✅ ถ้าเชื่อมแล้ว ให้ล้างโค้ดที่ค้างอยู่
         if (data.linked) {
           setLineErr(null);
           setLineCode(null);
@@ -556,7 +555,7 @@ function NotificationsCard() {
     } finally {
       setLineChecked(true);
     }
-  };
+  }, []);
 
   useEffect(() => {
     let alive = true;
@@ -589,7 +588,7 @@ function NotificationsCard() {
     return () => {
       alive = false;
     };
-  }, []);
+  }, [loadLineStatus]);
 
   // ✅ ถ้ามี code และยังไม่ linked: polling เช็คสถานะทุก 4 วิ (พอ user ไปพิมพ์ใน LINE แล้วหน้าเว็บจะอัปเดตเอง)
   useEffect(() => {
@@ -601,7 +600,7 @@ function NotificationsCard() {
     }, 4000);
 
     return () => clearInterval(t);
-  }, [lineCode, lineLinked]);
+  }, [lineCode, lineLinked, loadLineStatus]);
 
   const toggleType = (t: NotificationType) => {
     setS((prev) => {
@@ -670,6 +669,26 @@ function NotificationsCard() {
     setTimeout(() => setCopied(false), 1500);
   };
 
+  const unlinkLine = async () => {
+    if (!confirm("ต้องการยกเลิกการเชื่อม LINE ใช่ไหม?")) return;
+
+    try {
+      const res = await fetch("/api/line/unlink", { method: "POST" });
+      const data = await res.json();
+      if (!res.ok || !data.ok) {
+        setMsg({ type: "err", text: data.message ?? "ยกเลิกไม่สำเร็จ" });
+        return;
+      }
+
+      setMsg({ type: "ok", text: "ยกเลิกการเชื่อม LINE แล้ว" });
+
+      // refresh status
+      await loadLineStatus();
+    } catch {
+      setMsg({ type: "err", text: "เชื่อมต่อเซิร์ฟเวอร์ไม่ได้" });
+    }
+  };
+
   return (
     <div>
       <div className="font-semibold text-gray-900">Manage Notifications</div>
@@ -699,13 +718,13 @@ function NotificationsCard() {
 
               {/* ปุ่มขอรหัส/รีเฟรช */}
               {lineChecked && lineLinked ? (
-                <button
-                  type="button"
-                  onClick={loadLineStatus}
-                  className="px-4 py-2 rounded-xl font-bold border border-green-200 bg-white text-green-800 hover:bg-green-100 transition"
-                >
-                  รีเฟรช
-                </button>
+                  <button
+                    type="button"
+                    onClick={unlinkLine}
+                    className="px-4 py-2 rounded-xl font-bold border border-red-200 bg-white text-red-600 hover:bg-red-50 transition"
+                  >
+                    ยกเลิกการเชื่อม
+                  </button>
               ) : (
                 <button
                   type="button"
@@ -720,7 +739,9 @@ function NotificationsCard() {
                 >
                   {lineLoading ? 'กำลังขอรหัส...' : 'ขอรหัส LINE'}
                 </button>
-              )}
+
+              )
+              }
             </div>
 
             {lineErr && (
@@ -744,7 +765,7 @@ function NotificationsCard() {
                     onClick={copyLineCommand}
                     className={[
                       'inline-flex items-center gap-2 px-4 py-2 rounded-xl font-bold transition',
-                      'border border-green-600 bg-green-900 text-black-800',
+                      'border border-green-600 bg-green-900 text-white',
                       'hover:bg-green-100 active:scale-[0.98]',
                       'shadow-sm',
                     ].join(' ')}
@@ -762,7 +783,7 @@ function NotificationsCard() {
                     )}
                   </button>
 
-              
+
                 </div>
 
                 <div className="mt-3 text-xs text-green-700 leading-relaxed">
