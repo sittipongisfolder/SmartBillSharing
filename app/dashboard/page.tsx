@@ -37,20 +37,20 @@ export default function Dashboard() {
   }> = [
     {
       key: 'equal',
-      title: 'Split Equally',
-      desc: 'Total amount is divided evenly among all selected group members.',
+      title: 'แบ่งบิลเท่ากัน ',
+      desc: 'แบ่งบิลเท่าๆ กันสำหรับทุกคน เหมาะสำหรับการแชร์ค่าอาหารที่ทุกคนกินเหมือนกัน',
       Icon: ScaleIcon,
     },
     {
       key: 'percentage',
-      title: 'Percentage Split',
-      desc: 'Divide by custom percentages. Great for varying consumption levels.',
+      title: 'แบ่งตามเปอร์เซ็นต์ ',
+      desc: 'แบ่งบิลตามเปอร์เซ็นต์ที่กำหนด เหมาะสำหรับระดับการจัดการที่ยืดหยุ่นและต้องการความแม่นยำมากขึ้น',
       Icon: ChartPieIcon,
     },
     {
       key: 'personal',
-      title: 'Itemized Split',
-      desc: 'Assign specific bill items to individuals. Perfect for detailed meals.',
+      title: 'แบ่งตามรายการ ',
+      desc: 'แบ่งบิลตามรายการเฉพาะของแต่ละคน เหมาะสำหรับการจัดการค่าใช้จ่ายที่ละเอียด',
       Icon: ClipboardDocumentListIcon,
     },
   ];
@@ -74,19 +74,18 @@ export default function Dashboard() {
         <div className="pt-10 pb-12">
           {/* breadcrumb */}
           <div className="text-xs text-[#9ca3af]">
-            <span className="text-[#6b7280]">Expenses</span>
+            <span className="text-[#6b7280]">แบ่งบิล</span>
             <span className="mx-2">/</span>
-            <span className="text-[#fb8c00]">Split Method Selection</span>
+            <span className="text-[#fb8c00]">เลือกวิธีการแบ่งบิล</span>
           </div>
 
           <div className="mt-6 text-center">
             <h1 className="text-3xl md:text-4xl font-semibold tracking-tight">
-              Choose your split method
+              เลือกวิธีการแบ่งบิล
             </h1>
             <p className="mt-3 text-sm md:text-base text-[#6b7280]">
-              Select how you&apos;d like to divide the expenses with your group members. You
-              <br className="hidden md:block" />
-              can adjust this later if needed.
+              เลือกวิธีการแบ่งบิลที่เหมาะสมกับคุณและกลุ่มของคุณที่สุด
+          
             </p>
           </div>
 
@@ -130,7 +129,7 @@ export default function Dashboard() {
                     <p className="mt-2 text-sm leading-relaxed text-[#6b7280]">{desc}</p>
 
                     <div className="mt-4 inline-flex items-center gap-2 text-sm font-medium text-[#fb8c00]">
-                      How it works
+                      วิธีการใช้งาน
                       <span className="inline-flex h-5 w-5 items-center justify-center rounded-full bg-[#fb8c00]/10">
                         <span className="text-xs">i</span>
                       </span>
@@ -154,11 +153,10 @@ export default function Dashboard() {
                 'disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:bg-[#fb8c00]',
               ].join(' ')}
             >
-              Confirm Method
+              เลือกวิธีนี้
               <ArrowRightIcon className="h-5 w-5" />
             </button>
 
-            <div className="mt-4 text-xs text-[#9ca3af]">Step 2 of 4: Methodology selection</div>
           </div>
         </div>
       </main>
