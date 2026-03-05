@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState, useCallback } from 'react';
 import Link from 'next/link';
 import { BellIcon, CheckIcon, TrashIcon } from '@heroicons/react/24/outline';
 
@@ -41,6 +41,15 @@ const timeAgo = (iso: string) => {
   return `${days}d ago`;
 };
 
+// ✅ กัน popover ซ้อนกัน (event bus)
+const POPOVER_EVENT = 'sb:popover-open';
+type PopoverOpenDetail = { id: 'notifications' | 'userMenu' | string };
+
+function dispatchPopoverOpen(id: PopoverOpenDetail['id']) {
+  if (typeof window === 'undefined') return;
+  window.dispatchEvent(new CustomEvent<PopoverOpenDetail>(POPOVER_EVENT, { detail: { id } }));
+}
+
 export default function NotificationBell() {
   const [open, setOpen] = useState(false);
   const [tab, setTab] = useState<'unread' | 'all'>('unread');
@@ -50,7 +59,7 @@ export default function NotificationBell() {
 
   const boxRef = useRef<HTMLDivElement | null>(null);
 
-  const fetchList = async (filter: 'unread' | 'all') => {
+  const fetchList = useCallback(async (filter: 'unread' | 'all') => {
     setLoading(true);
     try {
       const res = await fetch(`/api/notifications?filter=${filter}&limit=20`);
@@ -62,19 +71,31 @@ export default function NotificationBell() {
     } finally {
       setLoading(false);
     }
-  };
+  }, []);
 
-const filter = tab === 'all' ? 'all' : 'unread';
+  const filter = tab === 'all' ? 'all' : 'unread';
 
-useEffect(() => {
-  fetchList(filter);
-}, [filter]);
+  useEffect(() => {
+    void fetchList(filter);
+  }, [fetchList, filter]);
 
-useEffect(() => {
-  if (open) fetchList(filter);
-}, [open, filter]);
+  useEffect(() => {
+    if (open) void fetchList(filter);
+  }, [open, fetchList, filter]);
 
+  // ✅ ถ้า popover อื่นเปิด (เช่น userMenu) ให้ปิดกระดิ่งทันที
+  useEffect(() => {
+    const onOtherPopoverOpen = (e: Event) => {
+      const ce = e as CustomEvent<PopoverOpenDetail>;
+      const id = ce.detail?.id;
+      if (id && id !== 'notifications') setOpen(false);
+    };
 
+    window.addEventListener(POPOVER_EVENT, onOtherPopoverOpen);
+    return () => window.removeEventListener(POPOVER_EVENT, onOtherPopoverOpen);
+  }, []);
+
+  // ✅ คลิกนอกกล่อง = ปิด
   useEffect(() => {
     const onClickOutside = (e: MouseEvent) => {
       if (!boxRef.current) return;
@@ -113,27 +134,31 @@ useEffect(() => {
     <div className="relative" ref={boxRef}>
       <button
         type="button"
-        onClick={() => setOpen((v) => !v)}
+        onClick={() =>
+          setOpen((v) => {
+            const next = !v;
+            if (next) dispatchPopoverOpen('notifications'); // ✅ เปิดกระดิ่ง -> ปิดอันอื่น
+            return next;
+          })
+        }
         className="relative h-10 w-10 rounded-full hover:bg-gray-100 flex items-center justify-center"
         aria-label="notifications"
       >
         <BellIcon className="h-6 w-6 text-gray-700" />
         {unreadCount > 0 && (
-          <span className="absolute -top-0.5 -right-0.5 min-w-[18px] h-[18px] px-1 rounded-full bg-[#fb8c00] text-white text-[11px] font-bold flex items-center justify-center">
+         <span className="absolute top-0 right-0 sm:-top-0.5 sm:-right-0.5 min-w-[18px] h-[18px] px-1 rounded-full bg-[#fb8c00] text-white text-[11px] font-bold flex items-center justify-center">
             {unreadCount > 99 ? '99+' : unreadCount}
           </span>
         )}
       </button>
 
       {open && (
-        <div className="absolute right-0 mt-2 w-[360px] rounded-2xl border border-black/10 bg-white shadow-[0_18px_50px_rgba(0,0,0,0.12)] overflow-hidden z-50">
-          {/* Top */}
+        <div className="fixed inset-x-2 top-16 sm:absolute sm:inset-x-auto sm:top-auto sm:right-0 mt-0 sm:mt-2 w-auto sm:w-[360px] rounded-2xl border border-black/10 bg-white shadow-[0_18px_50px_rgba(0,0,0,0.12)] overflow-hidden z-50">
           <div className="px-4 py-3 border-b border-black/5 flex items-center justify-between">
             <div className="font-semibold text-gray-900">Notifications</div>
             <div className="text-xs text-gray-500">{headerTitle}</div>
           </div>
 
-          {/* Tabs */}
           <div className="px-3 py-2 border-b border-black/5 flex gap-2">
             <button
               type="button"
@@ -176,8 +201,7 @@ useEffect(() => {
             </div>
           </div>
 
-          {/* List */}
-          <div className="max-h-[420px] overflow-y-auto">
+          <div className="max-h-[60vh] sm:max-h-[420px] overflow-y-auto">
             {loading ? (
               <div className="p-4 text-sm text-gray-500">Loading...</div>
             ) : items.length === 0 ? (
@@ -242,7 +266,6 @@ useEffect(() => {
             )}
           </div>
 
-          {/* Footer link ไปตั้งค่า */}
           <div className="px-4 py-3 border-t border-black/5 text-right">
             <Link href="/settings" className="text-sm font-semibold text-[#fb8c00] hover:text-[#e65100]">
               Notification settings

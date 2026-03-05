@@ -702,7 +702,7 @@ function NotificationsCard() {
           <div className="rounded-xl border border-green-200 bg-green-50 p-4">
             <div className="flex items-start justify-between gap-4">
               <div>
-                <div className="text-sm font-semibold text-green-900">เชื่อม LINE OA เพื่อรับแจ้งเตือน</div>
+                <div className="text-sm font-semibold text-green-900">เชื่อม LINE OA <span className="text-green-600">(@610buebz)</span> เพื่อรับแจ้งเตือน</div>
 
                 {lineChecked && lineLinked ? (
                   <div className="text-xs text-green-700 mt-1">
