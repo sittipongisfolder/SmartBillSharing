@@ -746,14 +746,7 @@ function CreateBillPageInner() {
 
           {/* Items */}
           <div className="mb-4">
-            <button
-              onClick={handleAddItems}
-              className="mt-3 text-sm text-[#fb8c00] font-medium hover:text-[#e65100]"
-              type="button"
-            >
-              ➕ เพิ่มรายการอาหาร
-            </button>
-
+          
             {/* ✅ ใส่ปุ่ม "ลบรายการ" ใต้แต่ละแถวเหมือนตัวอย่าง */}
             {itemList.map((item, index) => (
               <div key={index} className="mb-4">
@@ -793,10 +786,10 @@ function CreateBillPageInner() {
                       value={item.price}
                       onChange={(e) => handleInputChange(index, 'price', e.target.value)}
                     />
-                    <p className="mt-1 text-[10px] text-gray-400">สูงสุด 999999.99</p>
+                  
                   </div>
                 </div>
-
+                
                 <div className="mt-2">
                   <button
                     type="button"
@@ -814,6 +807,13 @@ function CreateBillPageInner() {
               </div>
             ))}
           </div>
+               <button
+              onClick={handleAddItems}
+              className="mt-3 text-sm text-[#fb8c00] font-medium hover:text-[#e65100]"
+              type="button"
+            >
+              ➕ เพิ่มรายการอาหาร
+            </button>
 
           {/* Participants */}
           <div className="mb-6">
@@ -991,7 +991,7 @@ function CreateBillPageInner() {
               value={totalPrice === '' ? '' : money(totalPrice).toFixed(2)}
               onChange={handleAmountChange}
             />
-            <p className="mt-1 text-xs text-gray-400">สูงสุด 999999.99</p>
+          
           </div>
 
           {/* Description */}

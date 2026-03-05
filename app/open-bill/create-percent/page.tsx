@@ -1,7 +1,7 @@
 'use client';
 
 import { useSearchParams } from 'next/navigation';
-import { Suspense,useEffect, useMemo, useRef, useState, type ChangeEvent } from 'react';
+import { Suspense, useEffect, useMemo, useRef, useState, type ChangeEvent } from 'react';
 import { CheckCircleIcon } from '@heroicons/react/24/solid';
 import { useSession } from 'next-auth/react';
 
@@ -793,7 +793,7 @@ function CreatePercentPageInner() {
         }),
       });
 
-            const raw = await res.text();
+      const raw = await res.text();
 
       const data: unknown = (() => {
         try {
@@ -896,13 +896,7 @@ function CreatePercentPageInner() {
 
           {/* Items */}
           <div className="mb-4">
-            <button
-              onClick={handleAddItems}
-              className="mt-3 text-sm text-[#fb8c00] font-medium hover:text-[#e65100]"
-              type="button"
-            >
-              ➕ เพิ่มรายการอาหาร
-            </button>
+
 
             {/* ✅ แก้ตรงนี้: ใส่ปุ่มลบรายการใต้แถวเหมือนรูป */}
             {itemList.map((item, index) => (
@@ -945,17 +939,16 @@ function CreatePercentPageInner() {
                     />
                   </div>
                 </div>
-
+                
                 <div className="mt-2">
                   <button
                     type="button"
                     onClick={() => handleRemoveItem(index)}
                     disabled={itemList.length <= 1}
-                    className={`px-4 py-2 rounded-lg text-sm border transition ${
-                      itemList.length <= 1
+                    className={`px-4 py-2 rounded-lg text-sm border transition ${itemList.length <= 1
                         ? 'border-gray-200 text-gray-400 cursor-not-allowed bg-gray-50'
-                        : 'border-black-100 text-black-600 hover:bg-black-50 hover:border-black-400'
-                    }`}
+                        : 'border-red-300 text-red-600 hover:bg-red-50 hover:border-red-400'
+                      }`}
                   >
                     ลบรายการ
                   </button>
@@ -963,6 +956,13 @@ function CreatePercentPageInner() {
               </div>
             ))}
           </div>
+          <button
+                  onClick={handleAddItems}
+                  className="mt-3 text-sm text-[#fb8c00] font-medium hover:text-[#e65100]"
+                  type="button"
+                >
+                  ➕ เพิ่มรายการอาหาร
+                </button>
 
           {/* Participants */}
           <div className="mb-6">
@@ -980,10 +980,10 @@ function CreatePercentPageInner() {
                         prev.map((p, i) =>
                           i === index
                             ? {
-                                ...p,
-                                userId: e.target.value,
-                                name: users.find((u) => u._id === e.target.value)?.name || '',
-                              }
+                              ...p,
+                              userId: e.target.value,
+                              name: users.find((u) => u._id === e.target.value)?.name || '',
+                            }
                             : p
                         )
                       )
@@ -1020,11 +1020,11 @@ function CreatePercentPageInner() {
                               prev.map((p, i) =>
                                 i === index
                                   ? {
-                                      ...p,
-                                      percent: pct,
-                                      pctMode: 'percent',
-                                      ...(pct === '' ? { amount: '' as AmountValue } : {}),
-                                    }
+                                    ...p,
+                                    percent: pct,
+                                    pctMode: 'percent',
+                                    ...(pct === '' ? { amount: '' as AmountValue } : {}),
+                                  }
                                   : p
                               )
                             );
@@ -1088,11 +1088,10 @@ function CreatePercentPageInner() {
                       if (index === 0) return;
                       setParticipants((prev) => (prev.length > 1 ? prev.filter((_, i) => i !== index) : prev));
                     }}
-                    className={`px-5 py-2 rounded-lg transition-all duration-200 shadow-sm ${
-                      index === 0
+                    className={`px-5 py-2 rounded-lg transition-all duration-200 shadow-sm ${index === 0
                         ? 'bg-gray-200 text-gray-400 cursor-not-allowed'
                         : 'bg-red-500 text-white hover:bg-red-600 hover:scale-105'
-                    }`}
+                      }`}
                   >
                     🗑
                   </button>
@@ -1219,11 +1218,10 @@ function CreatePercentPageInner() {
             <button
               onClick={handleSubmit}
               disabled={submitting || uploading}
-              className={`w-70 inline-flex items-center justify-center gap-2 px-3 py-3 font-semibold rounded-full shadow-md transition-all duration-300 ${
-                submitting || uploading
+              className={`w-70 inline-flex items-center justify-center gap-2 px-3 py-3 font-semibold rounded-full shadow-md transition-all duration-300 ${submitting || uploading
                   ? 'bg-gray-300 text-gray-600 cursor-not-allowed'
                   : 'bg-[#fb8c00] text-white hover:bg-[#e65100] hover:shadow-lg'
-              }`}
+                }`}
               type="button"
             >
               <CheckCircleIcon className="w-5 h-5" />

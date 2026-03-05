@@ -810,11 +810,16 @@ function CreateBillPersonalPageInner() {
                   </div>
                 )}
 
-                <div className="mt-2 flex gap-2">
+                 <div className="mt-2">
                   <button
                     type="button"
                     onClick={() => handleRemoveItem(it.id)}
-                    className="text-xs px-3 py-2 rounded-lg border border-gray-300 hover:bg-gray-50"
+                    disabled={itemList.length <= 1}
+                    className={`px-4 py-2 rounded-lg text-sm border transition ${
+                      itemList.length <= 1
+                        ? 'border-gray-200 text-gray-400 cursor-not-allowed bg-gray-50'
+                        : 'border-red-300 text-red-600 hover:bg-red-50 hover:border-red-400'
+                    }`}
                   >
                     ลบรายการ
                   </button>
