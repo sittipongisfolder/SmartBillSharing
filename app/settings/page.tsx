@@ -1,6 +1,6 @@
 'use client';
 
-import { ReactNode, useEffect, useState, useMemo, useCallback } from 'react';
+import { ReactNode, useEffect, useState, useMemo,Suspense, useCallback } from 'react';
 import { useSession } from 'next-auth/react';
 import {
   BellIcon,
@@ -37,7 +37,7 @@ type ProfileGetResponse = ProfileGetOk | ProfileGetErr;
 
 
 
-export default function SettingsPage() {
+function SettingsPageInner() {
   const { data: session } = useSession();
   const userName = session?.user?.name ?? 'User';
   const userEmail = session?.user?.email ?? '—';
@@ -894,3 +894,10 @@ function NotificationsCard() {
   );
 }
 
+export default function SettingsPage() {
+  return (
+    <Suspense fallback={<div className="min-h-screen bg-[#fbf7f1]" />}>
+      <SettingsPageInner />
+    </Suspense>
+  );
+}
