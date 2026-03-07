@@ -1,7 +1,7 @@
 'use client';
 
 import { useSearchParams } from 'next/navigation';
-import { Suspense,useEffect, useMemo, useRef, useState, type ChangeEvent } from 'react';
+import { Suspense, useEffect, useMemo, useRef, useState, type ChangeEvent } from 'react';
 import { CheckCircleIcon } from '@heroicons/react/24/solid';
 import { useSession } from 'next-auth/react';
 
@@ -20,25 +20,27 @@ interface Participant {
 
 type SplitType = 'equal' | 'percentage' | 'personal';
 
-/** ✅ เพิ่ม Type ของผลลัพธ์จาก /api/ocr (Typhoon OCR) */
-type TyphoonOcrResponse = {
-  ok: boolean;
-  error?: string;
-  raw?: unknown;
-  parsed?: {
-    title: string | null;
-    items: Array<{
-      name: string;
-      qty?: number | null;
-      unit_price?: number | null; // ราคา/ชิ้น (ใหม่)
-      line_total?: number | null; // ราคารวมบรรทัด (ใหม่)
-      price?: number | null; // รองรับของเดิม
-    }>;
-    total: number | null;
-    currency?: string | null;
-    raw_text?: string | null;
+/** ✅ Type ของผลลัพธ์จาก /api/ocr (Typhoon OCR) — ยึดตาม route.ts */
+type TyphoonOcrResponse =
+  | {
+    ok: true;
+    parsed: {
+      title: string | null;
+      items: Array<{
+        name: string;
+        qty: number;
+        unit_price: number;
+        line_total: number;
+      }>;
+      total: number | null;
+      raw_text: string | null;
+    };
+  }
+  | {
+    ok: false;
+    error?: string;
+    detail?: unknown;
   };
-};
 
 type ItemRow = { items: string; qty: string; price: string }; // price = unit price (string คุมรูปแบบ)
 
@@ -147,14 +149,6 @@ function CreateBillPageInner() {
     setAddParticipantSearch('');
   };
 
-  const fileToDataUrl = (file: File) =>
-    new Promise<string>((resolve, reject) => {
-      const reader = new FileReader();
-      reader.onload = () => resolve(String(reader.result || ''));
-      reader.onerror = () => reject(new Error('Failed to read file'));
-      reader.readAsDataURL(file);
-    });
-
   const isFiniteNumber = (n: unknown): n is number => typeof n === 'number' && Number.isFinite(n);
 
   const toNumber = (v: unknown, fallback = 0) => {
@@ -173,129 +167,6 @@ function CreateBillPageInner() {
     [participants]
   );
   const selectedCount = selectedParticipants.length;
-
-  // ✅ OCR parser: แปลง raw_text เป็นรายการ {items, qty, price(ราคา/ชิ้น)}
-  const parseReceiptToItems = (text: string): ItemRow[] => {
-    const lines = (text || '')
-      .split(/\r?\n/)
-      .map((l) => l.replace(/\t+/g, ' ').trim())
-      .filter(Boolean);
-
-    const skipWords = [
-      'total',
-      'subtotal',
-      'grand',
-      'sum',
-      'amount',
-      'vat',
-      'tax',
-      'service',
-      'change',
-      'cash',
-      'card',
-      'promptpay',
-      'qr',
-      'รวม',
-      'รวมทั้งสิ้น',
-      'ยอดรวม',
-      'สุทธิ',
-      'ภาษี',
-      'ค่าบริการ',
-      'ทอน',
-      'เงินสด',
-      'เลขที่',
-      'โทร',
-      'วันที่',
-      'เวลา',
-    ];
-
-    const cleanName = (s: string) =>
-      (s || '')
-        .replace(/^\s*\d+[\.)]\s*/g, '')
-        .replace(/[:\-–—]+$/g, '')
-        .replace(/\s+/g, ' ')
-        .trim();
-
-    const out: ItemRow[] = [];
-    let carryName = '';
-
-    for (const line of lines) {
-      const lower = line.toLowerCase();
-      if (skipWords.some((w) => lower.includes(w))) continue;
-
-      if (!/\d/.test(line) && line.length >= 2) {
-        carryName = (carryName ? `${carryName} ${line}` : line).trim();
-        continue;
-      }
-
-      // (1) name qty unit lineTotal
-      const mCols = line.match(
-        /^(.*?)(?:\s{1,}|\t+)(\d{1,3})\s+(\d{1,3}(?:,\d{3})*(?:\.\d{1,2})?)\s+(\d{1,3}(?:,\d{3})*(?:\.\d{1,2})?)\s*$/i
-      );
-      if (mCols) {
-        const name = cleanName(`${carryName} ${mCols[1] || ''}`.trim());
-        carryName = '';
-
-        const qty = Math.max(1, parseInt(String(mCols[2]).replace(/,/g, ''), 10) || 1);
-        const unit = toNumber(String(mCols[3]).replace(/,/g, ''), 0);
-        const lineTotal = toNumber(String(mCols[4]).replace(/,/g, ''), 0);
-
-        const unitPrice = unit > 0 ? unit : qty > 0 && lineTotal > 0 ? lineTotal / qty : 0;
-        const u = money(unitPrice);
-        if (name && u > 0) out.push({ items: name, qty: String(qty), price: u.toFixed(2) });
-        if (out.length >= 80) break;
-        continue;
-      }
-
-      // (2) name xqty unit
-      const mX = line.match(
-        /^(.*?)(?:\s{1,}|\t+)(?:x|X)\s*(\d{1,3})\s+(\d{1,3}(?:,\d{3})*(?:\.\d{1,2})?)\s*$/i
-      );
-      if (mX) {
-        const name = cleanName(`${carryName} ${mX[1] || ''}`.trim());
-        carryName = '';
-        const qty = Math.max(1, parseInt(String(mX[2]).replace(/,/g, ''), 10) || 1);
-        const unit = money(toNumber(String(mX[3]).replace(/,/g, ''), 0));
-        if (name && unit > 0) out.push({ items: name, qty: String(qty), price: unit.toFixed(2) });
-        if (out.length >= 80) break;
-        continue;
-      }
-
-      // (3) name qty total -> unit = total/qty
-      const mQtyTotal = line.match(
-        /^(.*?)(?:\s{1,}|\t+)(\d{1,3})\s+(\d{1,3}(?:,\d{3})*(?:\.\d{1,2})?)\s*$/i
-      );
-      if (mQtyTotal) {
-        const name = cleanName(`${carryName} ${mQtyTotal[1] || ''}`.trim());
-        carryName = '';
-        const qty = Math.max(1, parseInt(String(mQtyTotal[2]).replace(/,/g, ''), 10) || 1);
-        const maybeTotal = toNumber(String(mQtyTotal[3]).replace(/,/g, ''), 0);
-        const unit = qty > 0 && maybeTotal > 0 ? maybeTotal / qty : 0;
-
-        const u = money(unit);
-        if (name && u > 0.01) out.push({ items: name, qty: String(qty), price: u.toFixed(2) });
-        if (out.length >= 80) break;
-        continue;
-      }
-
-      // (4) name price
-      const m = line.match(
-        /^(.*?)(?:\s{1,}|\s*[-:]\s*)(\d{1,3}(?:,\d{3})*(?:\.\d{1,2})?)\s*(?:บาท|฿|baht)?\s*$/i
-      );
-      if (!m) continue;
-
-      const name = cleanName(`${carryName} ${m[1] || ''}`.trim());
-      carryName = '';
-      const priceNum = money(toNumber(String(m[2]).replace(/,/g, ''), 0));
-
-      if (!name || priceNum <= 0) continue;
-
-      out.push({ items: name, qty: '1', price: priceNum.toFixed(2) });
-      if (out.length >= 80) break;
-    }
-
-    return out;
-  };
 
   // โหลดรายชื่อผู้ใช้
   useEffect(() => {
@@ -327,120 +198,114 @@ function CreateBillPageInner() {
     });
   }, [users, currentUserEmail]);
 
-  // ✅ OCR
-  const handleReceiptChange = async (e: ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
+  async function compressImage(file: File, maxW = 1600, quality = 0.85): Promise<File> {
+    const img = await createImageBitmap(file);
+    const scale = Math.min(1, maxW / img.width);
+    const w = Math.round(img.width * scale);
+    const h = Math.round(img.height * scale);
 
-    setSelectedFileName(file.name);
+    const canvas = document.createElement('canvas');
+    canvas.width = w;
+    canvas.height = h;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return file;
+
+    ctx.drawImage(img, 0, 0, w, h);
+
+    const blob: Blob = await new Promise((resolve) =>
+      canvas.toBlob((b) => resolve(b ?? file), 'image/jpeg', quality)
+    );
+
+    return new File([blob], file.name.replace(/\.\w+$/, '.jpg'), { type: 'image/jpeg' });
+  }
+  // ✅ OCR (เหลือแค่เรียก route แล้วเอาค่าที่ parsed มาเติมฟอร์ม)
+  const handleReceiptChange = async (e: ChangeEvent<HTMLInputElement>) => {
+    const picked = e.target.files?.[0];
+    if (!picked) return;
+
+    setSelectedFileName(picked.name);
     setUploading(true);
 
     try {
       const token = localStorage.getItem('token');
 
-      const callOcrWithFormData = async () => {
-        const fd = new FormData();
-        fd.append('file', file);
+      const compressed = await compressImage(picked);
+      const fd = new FormData();
+      fd.append('file', compressed);
 
-        return fetch('/api/ocr', {
-          method: 'POST',
-          headers: token ? { Authorization: `Bearer ${token}` } : undefined,
-          body: fd,
-        });
-      };
+      const res = await fetch('/api/ocr', {
+        method: 'POST',
+        headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+        body: fd,
+      });
 
-      const callOcrWithJson = async () => {
-        const image = await fileToDataUrl(file);
-        return fetch('/api/ocr', {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            ...(token ? { Authorization: `Bearer ${token}` } : {}),
-          },
-          body: JSON.stringify({ image }),
-        });
-      };
+      const data = (await res.json().catch(() => null)) as TyphoonOcrResponse | null;
 
-      let res = await callOcrWithFormData();
-      let data = (await res.json().catch(() => null)) as TyphoonOcrResponse | null;
-
-      if (!res.ok || !data?.ok) {
-        res = await callOcrWithJson();
-        data = (await res.json().catch(() => null)) as TyphoonOcrResponse | null;
+      if (!data) {
+        console.error('OCR ERROR:', res.status, data);
+        alert(`OCR ไม่สำเร็จ: HTTP ${res.status}`);
+        return;
       }
 
-      if (!res.ok || !data?.ok) {
+      if (!res.ok || data.ok === false) {
         console.error('OCR ERROR:', res.status, data);
-        alert(`OCR ไม่สำเร็จ: ${data?.error || 'Unknown error'}`);
+        alert(
+          `OCR ไม่สำเร็จ: ${data.ok === false ? data.error || 'Unknown error' : `HTTP ${res.status}`
+          }`,
+        );
         return;
       }
 
       const parsed = data.parsed;
 
       const rawText =
-        typeof parsed?.raw_text === 'string' && parsed.raw_text.trim() ? parsed.raw_text.trim() : '';
-      const rawStr = typeof data.raw === 'string' ? data.raw : JSON.stringify(data.raw ?? '', null, 2);
+        typeof parsed.raw_text === 'string' && parsed.raw_text.trim()
+          ? parsed.raw_text.trim()
+          : '';
+      setDescription(rawText);
 
-      setDescription(rawText || rawStr);
+      const ocrTitle =
+        typeof parsed.title === 'string' ? parsed.title.trim() : '';
+      if (ocrTitle) {
+        setTitle((prev) => (prev.trim() ? prev : ocrTitle));
+      }
 
-      const mappedFromParsed =
-        Array.isArray(parsed?.items) && parsed.items.length > 0
-          ? parsed.items
-              .map((it) => {
-                const name = String(it?.name ?? '').trim();
-                if (!name) return null;
+      const mappedFromParsed: ItemRow[] = Array.isArray(parsed.items)
+        ? parsed.items
+          .map((it) => {
+            const name = String(it?.name ?? '').trim();
+            if (!name) return null;
 
-                const qtyNum = Math.max(1, parseInt(String(it?.qty ?? '1'), 10) || 1);
+            const qtyNum = Math.max(1, parseInt(String(it?.qty ?? 1), 10) || 1);
+            const unit = money(toNumber(it?.unit_price, 0));
 
-                const unitFromField = toNumber(it?.unit_price ?? it?.price, 0);
-                const lineTotal = toNumber(it?.line_total, 0);
+            return {
+              items: name,
+              qty: String(qtyNum),
+              price: unit.toFixed(2),
+            };
+          })
+          .filter((x): x is ItemRow => x !== null)
+        : [];
 
-                const unit =
-                  unitFromField > 0
-                    ? unitFromField
-                    : lineTotal > 0 && qtyNum > 0
-                      ? lineTotal / qtyNum
-                      : toNumber(it?.price, 0);
+      if (mappedFromParsed.length > 0) {
+        setItemList([...mappedFromParsed, { items: '', qty: '1', price: '' }]);
+      } else {
+        setItemList([{ items: '', qty: '1', price: '' }]);
+      }
 
-                const u = money(unit);
-                if (!(u > 0)) return null;
-
-                return {
-                  items: name,
-                  qty: String(qtyNum),
-                  price: u.toFixed(2),
-                } as ItemRow;
-              })
-              .filter((x): x is ItemRow => x !== null)
-          : [];
-
-      const finalItems =
-        mappedFromParsed.length > 0
-          ? mappedFromParsed
-          : (() => {
-              const textForFallback = rawText || rawStr;
-              return parseReceiptToItems(textForFallback);
-            })();
-
-      if (finalItems.length > 0) {
-        setItemList([...finalItems, { items: '', qty: '1', price: '' }]);
-
-        const sumFromItems = finalItems.reduce((sum, it) => {
+      const totalFromParsed = money(toNumber(parsed.total, 0));
+      if (totalFromParsed > 0) {
+        setTotalPrice(totalFromParsed);
+      } else {
+        const sumFromItems = mappedFromParsed.reduce((sum, it) => {
           const unitPrice = money(toNumber(it.price, 0));
           const qty = Math.max(1, parseInt(it.qty || '1', 10) || 1);
           return sum + unitPrice * qty;
         }, 0);
 
-        const total =
-          typeof parsed?.total === 'number' && Number.isFinite(parsed.total) && parsed.total > 0
-            ? parsed.total
-            : sumFromItems;
-
-        if (total > 0) setTotalPrice(money(total));
+        setTotalPrice(sumFromItems > 0 ? money(sumFromItems) : '');
       }
-
-      const ocrTitle = typeof parsed?.title === 'string' ? parsed.title.trim() : '';
-      if (ocrTitle) setTitle((prev) => (prev.trim() ? prev : ocrTitle));
     } catch (err) {
       console.error(err);
       alert('OCR ล้มเหลว (network/server)');
@@ -483,10 +348,9 @@ function CreateBillPageInner() {
     setItemList((prev) => [...prev, { items: '', qty: '1', price: '' }]);
   };
 
-  // ✅ เพิ่ม: ลบรายการ (เหมือนคำสั่งด้านบน) + คำนวณ Total ใหม่
+  // ✅ เพิ่ม: ลบรายการ + คำนวณ Total ใหม่
   const handleRemoveItem = (index: number) => {
     setItemList((prev) => {
-      // กันไม่ให้ลบจนไม่มีแถว
       if (prev.length <= 1) return prev;
 
       const next = prev.filter((_, i) => i !== index);
@@ -530,9 +394,7 @@ function CreateBillPageInner() {
     if (t > 0 && selectedCount > 0) {
       const share = money(t / selectedCount);
       setSharePerPerson(share);
-      setParticipants((prev) =>
-        prev.map((p) => (p.userId ? { ...p, amount: share } : { ...p, amount: 0 }))
-      );
+      setParticipants((prev) => prev.map((p) => (p.userId ? { ...p, amount: share } : { ...p, amount: 0 })));
     } else {
       setSharePerPerson(0);
       setParticipants((prev) => prev.map((p) => ({ ...p, amount: 0 })));
@@ -546,7 +408,9 @@ function CreateBillPageInner() {
   );
 
   const totalPercent = useMemo(() => {
-    return round2(selectedParticipants.reduce((sum, p) => sum + (isFiniteNumber(p.percent) ? p.percent : 0), 0));
+    return round2(
+      selectedParticipants.reduce((sum, p) => sum + (isFiniteNumber(p.percent) ? p.percent : 0), 0)
+    );
   }, [selectedParticipants]);
 
   useEffect(() => {
@@ -595,18 +459,32 @@ function CreateBillPageInner() {
   }, [splitType, selectedParticipants]);
 
   const summary = useMemo(() => {
-  const total = typeof totalPrice === 'number' && totalPrice > 0 ? money(totalPrice) : 0;
+    const total = typeof totalPrice === 'number' && totalPrice > 0 ? money(totalPrice) : 0;
 
-  const rows: SummaryRow[] = selectedParticipants.map((p) => {
-    const amount = money(toNumber(p.amount, 0));
-    const percent = total > 0 ? (amount / total) * 100 : 0;
-    const percentInput = round2(toNumber(p.percent, 0));
-    return { userId: p.userId, name: p.name, amount, percent, percentInput };
-  });
+    const rows: SummaryRow[] = selectedParticipants.map((p) => {
+      const amount = money(toNumber(p.amount, 0));
+      const percent = total > 0 ? (amount / total) * 100 : 0;
+      const percentInput = round2(toNumber(p.percent, 0));
+      return { userId: p.userId, name: p.name, amount, percent, percentInput };
+    });
 
-  // ...diff adjust...
-  return { total, rows };
-}, [totalPrice, selectedParticipants]); // ✅ เอา splitType ออก
+    // ปรับ diff ให้รวม amount เท่ากับ total (กันเศษสตางค์)
+    if (rows.length > 0 && total > 0) {
+      const sumAmt = money(rows.reduce((s, r) => s + r.amount, 0));
+      const diff = money(total - sumAmt);
+      if (diff !== 0) {
+        const last = rows.length - 1;
+        const nextAmt = money(rows[last].amount + diff);
+        rows[last] = {
+          ...rows[last],
+          amount: nextAmt,
+          percent: total > 0 ? (nextAmt / total) * 100 : 0,
+        };
+      }
+    }
+
+    return { total, rows };
+  }, [totalPrice, selectedParticipants]); // ✅ ไม่ต้องใส่ splitType เพราะไม่ใช้ในคำนวณ
 
   const handleSubmit = async () => {
     if (submitting) return; // ✅ กันดับเบิ้ลคลิ๊ก
@@ -615,15 +493,22 @@ function CreateBillPageInner() {
     try {
       const token = localStorage.getItem('token');
 
-      const cleanedItems = itemList
-        .map((it) => {
-          const name = (it.items || '').trim();
-          const qty = Math.max(1, parseInt(it.qty || '1', 10) || 1);
-          const unitPrice = money(toNumber(it.price, 0));
-          const lineTotal = money(qty * unitPrice);
-          return { items: name, price: lineTotal };
-        })
-        .filter((it) => it.items.length > 0 && it.price > 0);
+    const cleanedItems = itemList
+  .map((it) => {
+    const name = (it.items || '').trim();
+    const qty = Math.max(1, parseInt(it.qty || '1', 10) || 1);
+    const unitPrice = money(toNumber(it.price, 0));
+    const lineTotal = money(qty * unitPrice);
+
+    return {
+      items: name,
+      qty,
+      unit_price: unitPrice,
+      price: lineTotal,
+      line_total: lineTotal,
+    };
+  })
+  .filter((it) => it.items.length > 0);
 
       const cleanedParticipants = participants
         .filter((p) => p.userId && p.name)
@@ -721,9 +606,6 @@ function CreateBillPageInner() {
               {uploading ? 'Processing...' : 'Upload Image'}
             </button>
 
-            <p className="text-xs text-gray-400 mt-3">
-              * จำกัดจำนวนเงิน: ไม่เกิน 999999.99 และทศนิยม 2 ตำแหน่ง
-            </p>
           </div>
 
           <div className="flex items-center justify-center mb-6">
@@ -746,8 +628,6 @@ function CreateBillPageInner() {
 
           {/* Items */}
           <div className="mb-4">
-          
-            {/* ✅ ใส่ปุ่ม "ลบรายการ" ใต้แต่ละแถวเหมือนตัวอย่าง */}
             {itemList.map((item, index) => (
               <div key={index} className="mb-4">
                 <div className="flex gap-4">
@@ -786,20 +666,18 @@ function CreateBillPageInner() {
                       value={item.price}
                       onChange={(e) => handleInputChange(index, 'price', e.target.value)}
                     />
-                  
                   </div>
                 </div>
-                
+
                 <div className="mt-2">
                   <button
                     type="button"
                     onClick={() => handleRemoveItem(index)}
                     disabled={itemList.length <= 1}
-                    className={`px-4 py-2 rounded-lg text-sm border transition ${
-                      itemList.length <= 1
-                        ? 'border-gray-200 text-gray-400 cursor-not-allowed bg-gray-50'
-                        : 'border-red-300 text-red-600 hover:bg-red-50 hover:border-red-400'
-                    }`}
+                    className={`px-4 py-2 rounded-lg text-sm border transition ${itemList.length <= 1
+                      ? 'border-gray-200 text-gray-400 cursor-not-allowed bg-gray-50'
+                      : 'border-red-300 text-red-600 hover:bg-red-50 hover:border-red-400'
+                      }`}
                   >
                     ลบรายการ
                   </button>
@@ -807,16 +685,17 @@ function CreateBillPageInner() {
               </div>
             ))}
           </div>
-               <button
-              onClick={handleAddItems}
-              className="mt-3 text-sm text-[#fb8c00] font-medium hover:text-[#e65100]"
-              type="button"
-            >
-              ➕ เพิ่มรายการอาหาร
-            </button>
+
+          <button
+            onClick={handleAddItems}
+            className="mt-3 text-sm text-[#fb8c00] font-medium hover:text-[#e65100]"
+            type="button"
+          >
+            ➕ เพิ่มรายการอาหาร
+          </button>
 
           {/* Participants */}
-          <div className="mb-6">
+          <div className="mb-6 mt-6">
             <label className="block mb-1 text-sm text-gray-600">Participants</label>
 
             <div className="space-y-3">
@@ -831,10 +710,10 @@ function CreateBillPageInner() {
                         prev.map((p, i) =>
                           i === index
                             ? {
-                                ...p,
-                                userId: e.target.value,
-                                name: users.find((u) => u._id === e.target.value)?.name || '',
-                              }
+                              ...p,
+                              userId: e.target.value,
+                              name: users.find((u) => u._id === e.target.value)?.name || '',
+                            }
                             : p
                         )
                       )
@@ -866,12 +745,16 @@ function CreateBillPageInner() {
                         onChange={(e) => {
                           const v = e.target.value;
                           if (v === '') {
-                            setParticipants((prev) => prev.map((p, i) => (i === index ? { ...p, percent: '' } : p)));
+                            setParticipants((prev) =>
+                              prev.map((p, i) => (i === index ? { ...p, percent: '' } : p))
+                            );
                             return;
                           }
                           const num = Number(v);
                           const safe = Number.isFinite(num) ? Math.max(0, Math.min(100, num)) : '';
-                          setParticipants((prev) => prev.map((p, i) => (i === index ? { ...p, percent: safe } : p)));
+                          setParticipants((prev) =>
+                            prev.map((p, i) => (i === index ? { ...p, percent: safe } : p))
+                          );
                         }}
                       />
                     </div>
@@ -888,7 +771,9 @@ function CreateBillPageInner() {
                         onChange={(e) => {
                           const normalized = normalizeMoneyInput(e.target.value);
                           if (normalized === '') {
-                            setParticipants((prev) => prev.map((p, i) => (i === index ? { ...p, amount: '' } : p)));
+                            setParticipants((prev) =>
+                              prev.map((p, i) => (i === index ? { ...p, amount: '' } : p))
+                            );
                             return;
                           }
                           const amt = money(Number(normalized));
@@ -905,11 +790,10 @@ function CreateBillPageInner() {
                       if (index === 0) return;
                       setParticipants((prev) => (prev.length > 1 ? prev.filter((_, i) => i !== index) : prev));
                     }}
-                    className={`px-5 py-2 rounded-lg transition-all duration-200 shadow-sm ${
-                      index === 0
-                        ? 'bg-gray-200 text-gray-400 cursor-not-allowed'
-                        : 'bg-red-500 text-white hover:bg-red-600 hover:scale-105'
-                    }`}
+                    className={`px-5 py-2 rounded-lg transition-all duration-200 shadow-sm ${index === 0
+                      ? 'bg-gray-200 text-gray-400 cursor-not-allowed'
+                      : 'bg-red-500 text-white hover:bg-red-600 hover:scale-105'
+                      }`}
                   >
                     🗑
                   </button>
@@ -917,7 +801,6 @@ function CreateBillPageInner() {
               ))}
             </div>
 
-            {/* ✅ เปลี่ยน: กดเพิ่มผู้เข้าร่วมแล้วค่อยขึ้นช่องค้นหา */}
             <button
               onClick={handleAddParticipant}
               className="mt-3 text-sm text-[#fb8c00] font-medium hover:text-[#e65100]"
@@ -991,7 +874,6 @@ function CreateBillPageInner() {
               value={totalPrice === '' ? '' : money(totalPrice).toFixed(2)}
               onChange={handleAmountChange}
             />
-          
           </div>
 
           {/* Description */}
@@ -1024,9 +906,8 @@ function CreateBillPageInner() {
 
             {splitType === 'personal' && (
               <p
-                className={`text-xs mt-1 ${
-                  summary.total > 0 && Math.abs(personalSum - summary.total) > 0.01 ? 'text-red-500' : 'text-gray-500'
-                }`}
+                className={`text-xs mt-1 ${summary.total > 0 && Math.abs(personalSum - summary.total) > 0.01 ? 'text-red-500' : 'text-gray-500'
+                  }`}
               >
                 รวมที่กรอก: {money(personalSum).toFixed(2)} ฿
               </p>
@@ -1067,11 +948,10 @@ function CreateBillPageInner() {
             <button
               onClick={handleSubmit}
               disabled={submitting || uploading}
-              className={`w-70 inline-flex items-center justify-center gap-2 px-3 py-3 font-semibold rounded-full shadow-md transition-all duration-300 ${
-                submitting || uploading
-                  ? 'bg-gray-300 text-gray-600 cursor-not-allowed'
-                  : 'bg-[#fb8c00] text-white hover:bg-[#e65100] hover:shadow-lg'
-              }`}
+              className={`w-70 inline-flex items-center justify-center gap-2 px-3 py-3 font-semibold rounded-full shadow-md transition-all duration-300 ${submitting || uploading
+                ? 'bg-gray-300 text-gray-600 cursor-not-allowed'
+                : 'bg-[#fb8c00] text-white hover:bg-[#e65100] hover:shadow-lg'
+                }`}
               type="button"
             >
               <CheckCircleIcon className="w-5 h-5 text-white" />

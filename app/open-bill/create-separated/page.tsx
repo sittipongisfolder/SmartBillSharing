@@ -1,7 +1,7 @@
 'use client';
 
 import { useSearchParams } from 'next/navigation';
-import { Suspense,useEffect, useMemo, useRef, useState } from 'react';
+import { Suspense, useEffect, useMemo, useRef, useState, type ChangeEvent } from 'react';
 import { CheckCircleIcon } from '@heroicons/react/24/solid';
 import { useSession } from 'next-auth/react';
 
@@ -21,18 +21,38 @@ type ParticipantRow = {
 type ItemRow = {
   id: string;
   items: string;
-  qty: string; // จำนวน
-  price: string; // ราคา/ชิ้น (unit price)
+  qty: string;
+  price: string; // unit price
   ownerId: string; // userId หรือ "__shared__"
-  sharedWith: string[]; // รายชื่อคนที่ “หารร่วมกัน” เฉพาะรายการที่เป็น Shared
+  sharedWith: string[];
 };
+
+type TyphoonOcrResponse =
+  | {
+      ok: true;
+      parsed: {
+        title: string | null;
+        items: Array<{
+          name: string;
+          qty: number;
+          unit_price: number;
+          line_total: number;
+        }>;
+        total: number | null;
+        raw_text: string | null;
+      };
+    }
+  | {
+      ok: false;
+      error?: string;
+      detail?: unknown;
+    };
 
 const makeId = () =>
   typeof crypto !== 'undefined' && 'randomUUID' in crypto
     ? crypto.randomUUID()
     : `${Date.now()}_${Math.random().toString(16).slice(2)}`;
 
-// ✅ เงื่อนไขใหม่: ไม่เกิน 6 หลัก + ทศนิยม 2 ตำแหน่ง
 const MAX_INT_DIGITS = 6;
 const MAX_MONEY = 999999.99;
 
@@ -45,10 +65,8 @@ const clampMoney = (n: number) => {
   return n;
 };
 
-// ✅ ใช้ตัวนี้ทุกครั้งที่คำนวณเงิน
 const money = (n: number) => clampMoney(round2(n));
 
-// ✅ จำกัด input เงิน: ก่อนจุด 6 หลัก / หลังจุด 2 หลัก
 const normalizeMoneyInput = (v: string) => {
   const t = (v ?? '').trim();
   if (t === '') return '';
@@ -59,7 +77,8 @@ const normalizeMoneyInput = (v: string) => {
   const noExtraDots =
     firstDot === -1
       ? cleaned
-      : cleaned.slice(0, firstDot + 1) + cleaned.slice(firstDot + 1).replace(/\./g, '');
+      : cleaned.slice(0, firstDot + 1) +
+        cleaned.slice(firstDot + 1).replace(/\./g, '');
 
   const [intRaw, decRaw = ''] = noExtraDots.split('.');
   const intPart = (intRaw || '').slice(0, MAX_INT_DIGITS);
@@ -83,9 +102,9 @@ const toNum = (v: unknown, fallback = 0) => {
 
 const sanitizeItemText = (raw: string) => {
   return (raw || '')
-    .replace(/[^A-Za-z\u0E00-\u0E7F\s]/g, '')
+    .replace(/[^A-Za-z0-9\u0E00-\u0E7F\s()/%&+.,'-]/g, '')
     .replace(/\s+/g, ' ')
-    .trimStart();
+    .trim();
 };
 
 function isRecord(v: unknown): v is Record<string, unknown> {
@@ -101,71 +120,87 @@ function getErrorMessage(data: unknown): string | null {
   return null;
 }
 
-function safeStringify(v: unknown) {
-  try {
-    return JSON.stringify(v);
-  } catch {
-    return String(v);
-  }
-}
-
 function getMeByEmail(list: User[], email?: string | null): User | undefined {
   if (!email) return undefined;
   return list.find((u) => u.email === email);
 }
 
-// ===== OCR types =====
-type TyphoonOcrResponse = {
-  ok: boolean;
-  error?: string;
-  raw?: unknown;
-  parsed?: {
-    title?: string | null;
-    total?: number | null;
-    raw_text?: string | null;
-    items?: Array<{
-      name?: string | null;
-      qty?: number | string | null;
-      price?: number | string | null;
-    }>;
-  };
-};
+async function compressImage(
+  file: File,
+  maxW = 1600,
+  quality = 0.85
+): Promise<File> {
+  const img = await createImageBitmap(file);
+  const scale = Math.min(1, maxW / img.width);
+  const w = Math.round(img.width * scale);
+  const h = Math.round(img.height * scale);
+
+  const canvas = document.createElement('canvas');
+  canvas.width = w;
+  canvas.height = h;
+
+  const ctx = canvas.getContext('2d');
+  if (!ctx) return file;
+
+  ctx.drawImage(img, 0, 0, w, h);
+
+  const blob: Blob = await new Promise((resolve) => {
+    canvas.toBlob((b) => resolve(b ?? file), 'image/jpeg', quality);
+  });
+
+  return new File([blob], file.name.replace(/\.\w+$/, '.jpg'), {
+    type: 'image/jpeg',
+  });
+}
 
 function CreateBillPersonalPageInner() {
   const searchParams = useSearchParams();
   const typeRaw = searchParams.get('type');
-  const splitType = ((typeRaw as SplitType) || 'personal') as SplitType;
+  const splitType: SplitType =
+    typeRaw === 'equal' || typeRaw === 'percentage' || typeRaw === 'personal'
+      ? typeRaw
+      : 'personal';
 
   const { data: session } = useSession();
   const currentUserEmail = session?.user?.email ?? null;
 
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const addParticipantInputRef = useRef<HTMLInputElement | null>(null);
 
   const [title, setTitle] = useState('');
   const [users, setUsers] = useState<User[]>([]);
-  const [participants, setParticipants] = useState<ParticipantRow[]>([{ userId: '', name: '' }]);
+  const [participants, setParticipants] = useState<ParticipantRow[]>([
+    { userId: '', name: '' },
+  ]);
 
   const [itemList, setItemList] = useState<ItemRow[]>([
-    { id: makeId(), items: '', qty: '1', price: '', ownerId: '', sharedWith: [] },
+    {
+      id: makeId(),
+      items: '',
+      qty: '1',
+      price: '',
+      ownerId: '',
+      sharedWith: [],
+    },
   ]);
 
   const [description, setDescription] = useState('');
   const [selectedFileName, setSelectedFileName] = useState('');
   const [uploading, setUploading] = useState(false);
-
   const [submitting, setSubmitting] = useState(false);
 
-  // ✅ กด “เพิ่มผู้เข้าร่วม” แล้วค่อยขึ้น panel search
   const [isAddParticipantOpen, setIsAddParticipantOpen] = useState(false);
   const [addParticipantSearch, setAddParticipantSearch] = useState('');
-  const addParticipantInputRef = useRef<HTMLInputElement | null>(null);
 
   const selectedParticipants = useMemo(
     () => participants.filter((p) => p.userId && p.name),
     [participants]
   );
-  
-  const selectedIds = useMemo(() => selectedParticipants.map((p) => p.userId), [selectedParticipants]);
+
+  const selectedIds = useMemo(
+    () => selectedParticipants.map((p) => p.userId),
+    [selectedParticipants]
+  );
 
   const selectedUserIds = useMemo(() => {
     return new Set(participants.filter((p) => p.userId).map((p) => p.userId));
@@ -201,7 +236,6 @@ function CreateBillPersonalPageInner() {
     setAddParticipantSearch('');
   };
 
-  // ===== Load users =====
   useEffect(() => {
     async function fetchUsers() {
       try {
@@ -209,7 +243,11 @@ function CreateBillPersonalPageInner() {
         const data: unknown = await res.json().catch(() => null);
 
         const list =
-          Array.isArray(data) ? data : isRecord(data) && Array.isArray(data.users) ? data.users : [];
+          Array.isArray(data)
+            ? data
+            : isRecord(data) && Array.isArray(data.users)
+              ? data.users
+              : [];
 
         const safe = list
           .filter((x) => isRecord(x))
@@ -226,10 +264,10 @@ function CreateBillPersonalPageInner() {
         setUsers([]);
       }
     }
+
     fetchUsers();
   }, []);
 
-  // ===== Push "me" to first row =====
   useEffect(() => {
     const me = getMeByEmail(users, currentUserEmail);
     if (!me) return;
@@ -237,29 +275,31 @@ function CreateBillPersonalPageInner() {
     setParticipants((prev) => {
       if (prev.length > 0 && prev[0].userId === me._id) return prev;
 
-      const tail = prev.slice(1).filter((p) => p.userId !== me._id);
+      const tail = prev.filter((p, i) => i !== 0 && p.userId !== me._id);
       return [{ userId: me._id, name: me.name }, ...tail];
     });
   }, [users, currentUserEmail]);
 
-  // ===== Ensure ownerId/sharedWith still valid =====
   useEffect(() => {
-  const validIds = new Set(selectedIds);
+    const validIds = new Set(selectedIds);
 
-  setItemList((prev) =>
-    prev.map((it) => {
-      if (it.ownerId === '__shared__') {
-        const nextSharedWith = (it.sharedWith || []).filter((id) => validIds.has(id));
-        return { ...it, sharedWith: nextSharedWith };
-      }
+    setItemList((prev) =>
+      prev.map((it) => {
+        if (it.ownerId === '__shared__') {
+          const nextSharedWith = (it.sharedWith || []).filter((id) =>
+            validIds.has(id)
+          );
+          return { ...it, sharedWith: nextSharedWith };
+        }
 
-      if (!it.ownerId) return it;
-      return validIds.has(it.ownerId) ? it : { ...it, ownerId: '', sharedWith: [] };
-    })
-  );
-}, [selectedIds]); // ✅ ไม่ต้อง disable eslint แล้ว
+        if (!it.ownerId) return it;
+        return validIds.has(it.ownerId)
+          ? it
+          : { ...it, ownerId: '', sharedWith: [] };
+      })
+    );
+  }, [selectedIds]);
 
-  // ===== Compute totals =====
   const calc = useMemo(() => {
     const lineTotals = itemList.map((it) => {
       const qty = toQty(it.qty);
@@ -301,7 +341,9 @@ function CreateBillPersonalPageInner() {
       }
 
       if (validIds.has(it.ownerId)) {
-        personalByUser[it.ownerId] = money((personalByUser[it.ownerId] || 0) + it.lineTotal);
+        personalByUser[it.ownerId] = money(
+          (personalByUser[it.ownerId] || 0) + it.lineTotal
+        );
       }
     }
 
@@ -315,17 +357,19 @@ function CreateBillPersonalPageInner() {
 
     const sumAmt = money(perParticipant.reduce((s, p) => s + p.amount, 0));
     const diff = money(total - sumAmt);
+
     if (perParticipant.length > 0 && diff !== 0) {
       perParticipant[perParticipant.length - 1] = {
         ...perParticipant[perParticipant.length - 1],
-        amount: money(perParticipant[perParticipant.length - 1].amount + diff),
+        amount: money(
+          perParticipant[perParticipant.length - 1].amount + diff
+        ),
       };
     }
 
     return { total, sharedTotal, perParticipant, lineTotals, unassignedCount };
   }, [itemList, selectedParticipants]);
 
-  // ===== UI actions =====
   const handleAddParticipant = () => {
     setIsAddParticipantOpen((v) => !v);
     setAddParticipantSearch('');
@@ -333,24 +377,39 @@ function CreateBillPersonalPageInner() {
 
   const handleRemoveParticipant = (index: number) => {
     if (index === 0) return;
-    setParticipants((prev) => (prev.length > 1 ? prev.filter((_, i) => i !== index) : prev));
+    setParticipants((prev) =>
+      prev.length > 1 ? prev.filter((_, i) => i !== index) : prev
+    );
   };
 
-  const handleAddItem = () =>
+  const handleAddItem = () => {
     setItemList((prev) => [
       ...prev,
-      { id: makeId(), items: '', qty: '1', price: '', ownerId: '', sharedWith: [] },
+      {
+        id: makeId(),
+        items: '',
+        qty: '1',
+        price: '',
+        ownerId: '',
+        sharedWith: [],
+      },
     ]);
+  };
 
-  const handleRemoveItem = (id: string) =>
-    setItemList((prev) => (prev.length > 1 ? prev.filter((x) => x.id !== id) : prev));
+  const handleRemoveItem = (id: string) => {
+    setItemList((prev) =>
+      prev.length > 1 ? prev.filter((x) => x.id !== id) : prev
+    );
+  };
 
   const handleItemChange = <K extends keyof Omit<ItemRow, 'id'>>(
     id: string,
     field: K,
     value: Omit<ItemRow, 'id'>[K]
   ) => {
-    setItemList((prev) => prev.map((it) => (it.id === id ? { ...it, [field]: value } : it)));
+    setItemList((prev) =>
+      prev.map((it) => (it.id === id ? { ...it, [field]: value } : it))
+    );
   };
 
   const handleOwnerChange = (id: string, ownerId: string) => {
@@ -383,23 +442,36 @@ function CreateBillPersonalPageInner() {
     );
   };
 
-  const sharedSelectAll = (itemId: string) =>
+  const sharedSelectAll = (itemId: string) => {
     setItemList((prev) =>
       prev.map((it) =>
-        it.id === itemId && it.ownerId === '__shared__' ? { ...it, sharedWith: selectedIds } : it
+        it.id === itemId && it.ownerId === '__shared__'
+          ? { ...it, sharedWith: selectedIds }
+          : it
       )
     );
+  };
 
-  const sharedClearAll = (itemId: string) =>
+  const sharedClearAll = (itemId: string) => {
     setItemList((prev) =>
-      prev.map((it) => (it.id === itemId && it.ownerId === '__shared__' ? { ...it, sharedWith: [] } : it))
+      prev.map((it) =>
+        it.id === itemId && it.ownerId === '__shared__'
+          ? { ...it, sharedWith: [] }
+          : it
+      )
     );
+  };
 
   const assignUnassignedToMe = () => {
     const me = getMeByEmail(users, currentUserEmail);
     if (!me) return;
+
     setItemList((prev) =>
-      prev.map((it) => (!it.ownerId && it.items.trim() ? { ...it, ownerId: me._id, sharedWith: [] } : it))
+      prev.map((it) =>
+        !it.ownerId && it.items.trim()
+          ? { ...it, ownerId: me._id, sharedWith: [] }
+          : it
+      )
     );
   };
 
@@ -414,29 +486,31 @@ function CreateBillPersonalPageInner() {
 
   const resetForm = () => {
     const me = getMeByEmail(users, currentUserEmail);
+
     setTitle('');
     setDescription('');
     setSelectedFileName('');
     setUploading(false);
     setSubmitting(false);
-
     setIsAddParticipantOpen(false);
     setAddParticipantSearch('');
 
-    setParticipants(me ? [{ userId: me._id, name: me.name }] : [{ userId: '', name: '' }]);
-    setItemList([{ id: makeId(), items: '', qty: '1', price: '', ownerId: '', sharedWith: [] }]);
-    if (fileInputRef.current) fileInputRef.current.value = '';
-  };
+    setParticipants(
+      me ? [{ userId: me._id, name: me.name }] : [{ userId: '', name: '' }]
+    );
 
-  // ===== OCR helpers =====
-  const normalizeNameQty = (name: string) => {
-    const t = (name || '').trim();
-    const m = t.match(/^\s*(\d{1,2})\s*(.*)$/);
-    if (!m) return { qty: '1', name: t };
-    const q = Number(m[1]);
-    if (!Number.isFinite(q) || q <= 0 || q > 50) return { qty: '1', name: t };
-    const rest = (m[2] || '').trim();
-    return { qty: String(q), name: rest || t };
+    setItemList([
+      {
+        id: makeId(),
+        items: '',
+        qty: '1',
+        price: '',
+        ownerId: '',
+        sharedWith: [],
+      },
+    ]);
+
+    if (fileInputRef.current) fileInputRef.current.value = '';
   };
 
   const runOcr = async (file: File) => {
@@ -450,8 +524,10 @@ function CreateBillPersonalPageInner() {
     setUploading(true);
 
     try {
+      const compressed = await compressImage(file);
+
       const fd = new FormData();
-      fd.append('file', file);
+      fd.append('file', compressed);
 
       const res = await fetch('/api/ocr', {
         method: 'POST',
@@ -461,8 +537,15 @@ function CreateBillPersonalPageInner() {
 
       const data = (await res.json().catch(() => null)) as TyphoonOcrResponse | null;
 
-      if (!res.ok || !data?.ok) {
-        const msg = data?.error || `HTTP ${res.status}`;
+      if (!data) {
+        alert(`OCR ไม่สำเร็จ: HTTP ${res.status}`);
+        console.error('OCR ERROR:', res.status, data);
+        return;
+      }
+
+      if (!res.ok || data.ok === false) {
+        const msg =
+          data.ok === false ? data.error || 'Unknown error' : `HTTP ${res.status}`;
         alert(`OCR ไม่สำเร็จ: ${msg}`);
         console.error('OCR ERROR:', res.status, data);
         return;
@@ -470,74 +553,68 @@ function CreateBillPersonalPageInner() {
 
       const parsed = data.parsed;
 
-      if (!title.trim() && typeof parsed?.title === 'string' && parsed.title.trim()) {
+      if (!title.trim() && parsed.title?.trim()) {
         setTitle(parsed.title.trim());
       }
 
-      const desc =
-        typeof parsed?.raw_text === 'string' && parsed.raw_text.trim()
-          ? parsed.raw_text
-          : data.raw != null
-            ? safeStringify(data.raw)
-            : '';
-      setDescription(desc);
+      const rawText =
+        typeof parsed.raw_text === 'string' && parsed.raw_text.trim()
+          ? parsed.raw_text.trim()
+          : '';
+      setDescription(rawText);
 
-      const rawItems = Array.isArray(parsed?.items) ? parsed!.items! : [];
-      if (!rawItems.length) return;
+      const rawItems = Array.isArray(parsed.items) ? parsed.items : [];
+      if (!rawItems.length) {
+        setItemList([
+          {
+            id: makeId(),
+            items: '',
+            qty: '1',
+            price: '',
+            ownerId: '',
+            sharedWith: [],
+          },
+        ]);
+        return;
+      }
 
-      const defaultOwner = participants[0]?.userId || getMeByEmail(users, currentUserEmail)?._id || '';
+      const defaultOwner =
+        participants[0]?.userId ||
+        getMeByEmail(users, currentUserEmail)?._id ||
+        '';
 
-      const prepared = rawItems
-        .map((it) => {
-          const rawName = String(it?.name ?? '').trim();
-          const rawQtyStr = it?.qty != null ? String(it.qty) : '';
-          const nq = rawQtyStr ? { qty: rawQtyStr, name: rawName } : normalizeNameQty(rawName);
+      const nextItems = rawItems
+        .map<ItemRow | null>((it) => {
+          const name = sanitizeItemText(String(it?.name ?? '').trim());
+          if (!name) return null;
 
-          const qtyNum = toQty(nq.qty || '1');
-          const p0 = toNum(it?.price, 0);
+          const qtyNum = toQty(String(it?.qty ?? '1'));
+          const unitPrice = money(toNum(it?.unit_price, 0));
 
           return {
             id: makeId(),
-            name: sanitizeItemText(nq.name),
-            qtyNum,
-            p0,
+            items: name,
+            qty: String(qtyNum),
+            price: unitPrice.toFixed(2),
+            ownerId: defaultOwner,
+            sharedWith: [] as string[],
           };
         })
-        .filter((x) => x.name);
-
-      if (!prepared.length) return;
-
-      const ocrTotal = typeof parsed?.total === 'number' ? parsed.total : null;
-
-      const sumAsLine = money(prepared.reduce((s, x) => s + money(x.p0), 0));
-      const sumAsUnit = money(prepared.reduce((s, x) => s + money(x.p0) * x.qtyNum, 0));
-
-      const treatPriceAsLineTotal =
-        ocrTotal != null ? Math.abs(sumAsLine - ocrTotal) <= Math.abs(sumAsUnit - ocrTotal) : true;
-
-      const nextItems: ItemRow[] = prepared.map((x) => {
-        const p0 = money(x.p0);
-        const unit =
-          x.qtyNum > 0
-            ? treatPriceAsLineTotal
-              ? money(p0 / x.qtyNum)
-              : p0
-            : p0;
-
-        return {
-          id: x.id,
-          items: x.name,
-          qty: String(x.qtyNum),
-          price: unit > 0 ? unit.toFixed(2) : '',
-          ownerId: defaultOwner,
-          sharedWith: [],
-        };
-      });
+        .filter((x): x is ItemRow => x !== null);
 
       setItemList(
-        nextItems.length
+        nextItems.length > 0
           ? nextItems
-          : [{ id: makeId(), items: '', qty: '1', price: '', ownerId: '', sharedWith: [] }]
+          : [
+              {
+                id: makeId(),
+                items: '',
+                qty: '1',
+                price: '',
+                ownerId: '',
+                sharedWith: [],
+              },
+            ]
       );
     } catch (err) {
       console.error(err);
@@ -548,7 +625,7 @@ function CreateBillPersonalPageInner() {
     }
   };
 
-  const handleReceiptChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleReceiptChange = async (e: ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
     await runOcr(file);
@@ -558,25 +635,37 @@ function CreateBillPersonalPageInner() {
     const names = ids
       .map((id) => selectedParticipants.find((p) => p.userId === id)?.name)
       .filter(Boolean) as string[];
+
     if (names.length === 0) return 'Shared';
     if (names.length <= 3) return names.join(',');
     return `${names.slice(0, 3).join(',')}+${names.length - 3}`;
   };
 
-  // ===== Submit =====
   const handleSubmit = async () => {
     if (submitting) return;
     setSubmitting(true);
 
     try {
-      if (!title.trim()) return alert('กรุณากรอก Bill Title');
-      if (selectedParticipants.length === 0) return alert('กรุณาเลือก Participants อย่างน้อย 1 คน');
-      if (calc.total <= 0) return alert('ยอดรวมต้องมากกว่า 0');
+      if (!title.trim()) {
+        alert('กรุณากรอก Bill Title');
+        return;
+      }
+
+      if (selectedParticipants.length === 0) {
+        alert('กรุณาเลือก Participants อย่างน้อย 1 คน');
+        return;
+      }
+
+      if (calc.total <= 0) {
+        alert('ยอดรวมต้องมากกว่า 0');
+        return;
+      }
 
       if (calc.unassignedCount > 0) {
-        return alert(
+        alert(
           `มี ${calc.unassignedCount} รายการที่ยังไม่ครบ (ยังไม่เลือก Owner หรือยังไม่เลือกคนหารใน Shared)`
         );
+        return;
       }
 
       const cleanedItems = calc.lineTotals
@@ -591,10 +680,32 @@ function CreateBillPersonalPageInner() {
                 ? `[${selectedParticipants.find((p) => p.userId === it.ownerId)?.name || 'Owner'}]`
                 : '';
 
-          const displayName = `${tag} ${name} x${it.qty}`.trim();
-          return { items: displayName, price: money(it.lineTotal) };
+          const displayName = `${tag} ${name}`.trim();
+
+          return {
+            items: displayName,
+            qty: it.qty,
+            unit_price: money(it.unit),
+            price: money(it.lineTotal),
+            line_total: money(it.lineTotal),
+            ownerId: it.ownerId,
+            sharedWith:
+              it.ownerId === '__shared__' ? (it.sharedWith || []) : [],
+          };
         })
-        .filter((x): x is { items: string; price: number } => !!x);
+        .filter(
+          (
+            x
+          ): x is {
+            items: string;
+            qty: number;
+            unit_price: number;
+            price: number;
+            line_total: number;
+            ownerId: string;
+            sharedWith: string[];
+          } => x !== null
+        );
 
       const cleanedParticipants = calc.perParticipant.map((p) => ({
         userId: p.userId,
@@ -619,6 +730,7 @@ function CreateBillPersonalPageInner() {
 
       const rawText = await res.text();
       let data: unknown = {};
+
       try {
         data = JSON.parse(rawText) as unknown;
       } catch {
@@ -653,11 +765,10 @@ function CreateBillPersonalPageInner() {
 
       <div className="min-h-screen flex flex-col items-center justify-center p-6 bg-[radial-gradient(circle_at_top_right,#fff5e6_0%,#ffffff_40%,#fff0e0_100%)]">
         <div className="w-full max-w-150 bg-white rounded-2xl shadow-xl p-8 relative">
-          <h1 className="text-3xl font-bold mb-4 text-center text-[#4a4a4a] ">
+          <h1 className="text-3xl font-bold mb-4 text-center text-[#4a4a4a]">
             Add New Bill <span className="text-sm font-normal text-gray-500">({splitType})</span>
           </h1>
 
-          {/* Upload */}
           <div className="border-dashed border-2 border-gray-300 rounded-xl p-8 text-center mb-6">
             <p className="text-lg text-[#4a4a4a] mb-2">Upload a receipt or drag and drop</p>
             <p className="text-xs text-gray-400 mb-2">PNG, JPG up to 10MB</p>
@@ -670,7 +781,13 @@ function CreateBillPersonalPageInner() {
               <div className="mb-4" />
             )}
 
-            <input ref={fileInputRef} type="file" accept="image/*" className="hidden" onChange={handleReceiptChange} />
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept="image/*"
+              className="hidden"
+              onChange={handleReceiptChange}
+            />
 
             <button
               type="button"
@@ -680,8 +797,6 @@ function CreateBillPersonalPageInner() {
             >
               {uploading ? 'Processing...' : 'Upload Image'}
             </button>
-
-            
           </div>
 
           <div className="flex items-center justify-center mb-6">
@@ -690,7 +805,6 @@ function CreateBillPersonalPageInner() {
             <hr className="w-1/3 border-[#e0e0e0]" />
           </div>
 
-          {/* Title */}
           <div className="mb-4">
             <label className="block mb-1 text-sm text-gray-600">Bill Title</label>
             <input
@@ -702,7 +816,6 @@ function CreateBillPersonalPageInner() {
             />
           </div>
 
-          {/* ✅ Items (อยู่ก่อน Participants) */}
           <div className="mb-2">
             <div className="mt-3 grid grid-cols-12 gap-3 text-xs text-gray-500">
               <div className="col-span-4">Items</div>
@@ -720,7 +833,9 @@ function CreateBillPersonalPageInner() {
                       className="w-full p-3 border text-gray-800 placeholder:text-gray-400 border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#fb8c00]"
                       placeholder="e.g., Fried rice"
                       value={it.items}
-                      onChange={(e) => handleItemChange(it.id, 'items', e.target.value)}
+                      onChange={(e) =>
+                        handleItemChange(it.id, 'items', e.target.value)
+                      }
                     />
                   </div>
 
@@ -732,11 +847,12 @@ function CreateBillPersonalPageInner() {
                       inputMode="numeric"
                       className="w-full p-3 border text-gray-800 border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#fb8c00]"
                       value={it.qty}
-                      onChange={(e) => handleItemChange(it.id, 'qty', e.target.value)}
+                      onChange={(e) =>
+                        handleItemChange(it.id, 'qty', e.target.value)
+                      }
                     />
                   </div>
 
-                  {/* ✅ ปรับ Price ให้เท่าช่องอื่น (ไม่มีข้อความใต้ช่องแล้ว) */}
                   <div className="col-span-2">
                     <input
                       type="text"
@@ -745,7 +861,13 @@ function CreateBillPersonalPageInner() {
                       value={it.price}
                       placeholder="0.00"
                       title="สูงสุด 999999.99"
-                      onChange={(e) => handleItemChange(it.id, 'price', normalizeMoneyInput(e.target.value))}
+                      onChange={(e) =>
+                        handleItemChange(
+                          it.id,
+                          'price',
+                          normalizeMoneyInput(e.target.value)
+                        )
+                      }
                     />
                   </div>
 
@@ -810,7 +932,7 @@ function CreateBillPersonalPageInner() {
                   </div>
                 )}
 
-                 <div className="mt-2">
+                <div className="mt-2">
                   <button
                     type="button"
                     onClick={() => handleRemoveItem(it.id)}
@@ -841,7 +963,7 @@ function CreateBillPersonalPageInner() {
                 onClick={assignUnassignedToMe}
                 className="text-sm text-gray-700 font-medium hover:text-gray-900"
               >
-                
+                Assign ช่องว่างให้ฉัน
               </button>
 
               <button
@@ -849,6 +971,7 @@ function CreateBillPersonalPageInner() {
                 onClick={assignAllShared}
                 className="text-sm text-gray-700 font-medium hover:text-gray-900"
               >
+                ตั้งทุกช่องเป็น Shared
               </button>
             </div>
 
@@ -857,7 +980,6 @@ function CreateBillPersonalPageInner() {
             </p>
           </div>
 
-          {/* ✅ Participants (ย้ายมาไว้ใต้ Items) */}
           <div className="mb-6 mt-6">
             <label className="block mb-1 text-sm text-gray-600">Participants</label>
 
@@ -872,14 +994,22 @@ function CreateBillPersonalPageInner() {
                       const id = e.target.value;
                       const u = users.find((x) => x._id === id);
                       setParticipants((prev) =>
-                        prev.map((row, i) => (i === index ? { userId: id, name: u?.name || '' } : row))
+                        prev.map((row, i) =>
+                          i === index
+                            ? { userId: id, name: u?.name || '' }
+                            : row
+                        )
                       );
                     }}
                   >
                     <option value="">-- เลือกผู้ใช้ --</option>
-
                     {users
-                      .filter((u) => !participants.some((x) => x.userId === u._id && x.userId !== p.userId))
+                      .filter(
+                        (u) =>
+                          !participants.some(
+                            (x) => x.userId === u._id && x.userId !== p.userId
+                          )
+                      )
                       .map((u) => (
                         <option key={u._id} value={u._id}>
                           {u.name}
@@ -937,7 +1067,9 @@ function CreateBillPersonalPageInner() {
 
                 <div className="mt-2 max-h-56 overflow-auto">
                   {addParticipantCandidates.length === 0 ? (
-                    <p className="text-sm text-gray-500 py-3 text-center">ไม่พบผู้ใช้</p>
+                    <p className="text-sm text-gray-500 py-3 text-center">
+                      ไม่พบผู้ใช้
+                    </p>
                   ) : (
                     <div className="space-y-2">
                       {addParticipantCandidates.map((u) => (
@@ -950,11 +1082,16 @@ function CreateBillPersonalPageInner() {
                           <div className="flex items-center justify-between gap-3">
                             <div className="min-w-0">
                               <p className="text-sm font-medium text-gray-800 truncate">
-                                {u.name} {u.email === currentUserEmail ? '(You)' : ''}
+                                {u.name}{' '}
+                                {u.email === currentUserEmail ? '(You)' : ''}
                               </p>
-                              <p className="text-xs text-gray-400 truncate">{u.email}</p>
+                              <p className="text-xs text-gray-400 truncate">
+                                {u.email}
+                              </p>
                             </div>
-                            <span className="text-xs font-semibold text-[#fb8c00]">เพิ่ม</span>
+                            <span className="text-xs font-semibold text-[#fb8c00]">
+                              เพิ่ม
+                            </span>
                           </div>
                         </button>
                       ))}
@@ -965,7 +1102,6 @@ function CreateBillPersonalPageInner() {
             )}
           </div>
 
-          {/* Description */}
           <div className="mb-6 mt-6">
             <label className="block mb-1 text-sm text-gray-600">Description</label>
             <textarea
@@ -977,21 +1113,28 @@ function CreateBillPersonalPageInner() {
             />
           </div>
 
-          {/* Total + Summary */}
           <div className="mb-4 text-center">
             <p className="text-lg text-[#4a4a4a]">รวมทั้งหมด</p>
-            <p className="text-2xl font-semibold text-[#fb8c00]">{money(calc.total).toFixed(2)} ฿</p>
-            <p className="text-xs text-gray-500 mt-1">Shared รวม: {money(calc.sharedTotal).toFixed(2)} ฿</p>
+            <p className="text-2xl font-semibold text-[#fb8c00]">
+              {money(calc.total).toFixed(2)} ฿
+            </p>
+            <p className="text-xs text-gray-500 mt-1">
+              Shared รวม: {money(calc.sharedTotal).toFixed(2)} ฿
+            </p>
           </div>
 
           <div className="mb-6">
             <div className="text-center mb-2">
-              <p className="text-lg font-semibold text-[#4a4a4a]">สรุปยอดที่ต้องจ่าย</p>
+              <p className="text-lg font-semibold text-[#4a4a4a]">
+                สรุปยอดที่ต้องจ่าย
+              </p>
             </div>
 
             <div className="bg-[#f1f1f1] rounded-2xl p-5">
               {calc.perParticipant.length === 0 ? (
-                <p className="text-sm text-gray-500 text-center">ยังไม่มีผู้เข้าร่วม</p>
+                <p className="text-sm text-gray-500 text-center">
+                  ยังไม่มีผู้เข้าร่วม
+                </p>
               ) : (
                 <div className="space-y-2">
                   {calc.perParticipant.map((p) => (
@@ -999,10 +1142,13 @@ function CreateBillPersonalPageInner() {
                       <div className="text-[#4a4a4a]">
                         {p.name} ({calc.total > 0 ? p.percent.toFixed(0) : '0'}%)
                         <div className="text-xs text-gray-500">
-                          ของตัวเอง: {money(p.personal).toFixed(2)} ฿ + Shared ที่โดนหาร: {money(p.shared).toFixed(2)} ฿
+                          ของตัวเอง: {money(p.personal).toFixed(2)} ฿ + Shared ที่โดนหาร:{' '}
+                          {money(p.shared).toFixed(2)} ฿
                         </div>
                       </div>
-                      <div className="text-[#4a4a4a] font-semibold">{money(p.amount).toFixed(2)} ฿</div>
+                      <div className="text-[#4a4a4a] font-semibold">
+                        {money(p.amount).toFixed(2)} ฿
+                      </div>
                     </div>
                   ))}
                 </div>
@@ -1011,12 +1157,12 @@ function CreateBillPersonalPageInner() {
 
             {calc.unassignedCount > 0 && (
               <p className="mt-2 text-xs text-red-500">
-                ยังมี {calc.unassignedCount} รายการที่ยังไม่ครบ (ยังไม่เลือก Owner หรือยังไม่เลือกคนหารใน Shared)
+                ยังมี {calc.unassignedCount}{' '}
+                รายการที่ยังไม่ครบ (ยังไม่เลือก Owner หรือยังไม่เลือกคนหารใน Shared)
               </p>
             )}
           </div>
 
-          {/* Confirm */}
           <div className="flex items-center justify-center mt-4">
             <button
               onClick={handleSubmit}
@@ -1038,7 +1184,7 @@ function CreateBillPersonalPageInner() {
   );
 }
 
-export default function CreatePercentPage() {
+export default function CreatePersonalPage() {
   return (
     <Suspense fallback={<div className="min-h-screen bg-[#fbf7f1]" />}>
       <CreateBillPersonalPageInner />

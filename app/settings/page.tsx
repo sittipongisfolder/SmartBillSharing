@@ -1,6 +1,6 @@
 'use client';
 
-import { ReactNode, useEffect, useState, useCallback } from 'react';
+import { ReactNode, useEffect, useState, useMemo, useCallback } from 'react';
 import { useSession } from 'next-auth/react';
 import {
   BellIcon,
@@ -10,7 +10,7 @@ import {
   UserIcon,
 } from '@heroicons/react/24/outline';
 import { ClipboardIcon, CheckIcon } from '@heroicons/react/24/outline';
-
+import { useSearchParams } from 'next/navigation';
 
 type TabKey = 'profile' | 'password' | 'notifications';
 
@@ -36,15 +36,19 @@ type ProfileGetResponse = ProfileGetOk | ProfileGetErr;
 
 
 
+
 export default function SettingsPage() {
   const { data: session } = useSession();
   const userName = session?.user?.name ?? 'User';
   const userEmail = session?.user?.email ?? '—';
 
-  const [tab, setTab] = useState<TabKey>('profile');
+  const searchParams = useSearchParams();
 
+  const initialTab = useMemo<TabKey>(() => {
+    return searchParams.get('tab') === 'notifications' ? 'notifications' : 'profile';
+  }, [searchParams]);
 
-
+  const [tab, setTab] = useState<TabKey>(initialTab);
 
 
   return (

@@ -117,7 +117,7 @@ export default function PaySlipClient({ billId }: { billId: string }) {
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [loading, setLoading] = useState<boolean>(false);
   const [result, setResult] = useState<ApiRes | null>(null);
-  
+
 
   // ---------- redirect countdown ----------
   const [redirectIn, setRedirectIn] = useState<number | null>(null);
@@ -140,7 +140,7 @@ export default function PaySlipClient({ billId }: { billId: string }) {
   const [billTitle, setBillTitle] = useState<string>('');
   const [owner, setOwner] = useState<Owner | null>(null);
   const [myShare, setMyShare] = useState<number>(0);
-  
+
   // State สำหรับเก็บ Tip
   const [tip, setTip] = useState<number>(0);
 
@@ -241,6 +241,17 @@ export default function PaySlipClient({ billId }: { billId: string }) {
 
   const canSubmit = useMemo(() => Boolean(file) && !loading, [file, loading]);
 
+  function handleSaveQr() {
+    if (!qrDataUrl) return;
+
+    const link = document.createElement('a');
+    link.href = qrDataUrl;
+    link.download = `promptpay-qr-${billId}.png`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  }
+
   async function onSubmit() {
     if (!file) return;
     clearTimers();
@@ -251,8 +262,8 @@ export default function PaySlipClient({ billId }: { billId: string }) {
       const form = new FormData();
       form.append('file', file);
       form.append('autoPaid', 'true');
-      
-      
+
+
 
       const res = await fetch(`/api/bills/${billId}/slip-check`, {
         method: 'POST',
@@ -292,25 +303,27 @@ export default function PaySlipClient({ billId }: { billId: string }) {
     <div className="min-h-screen bg-[radial-gradient(circle_at_top_right,#fff5e6_0%,#ffffff_40%,#fff0e0_100%)]">
       {/* Header */}
       <div className="sticky top-0 z-10 bg-white border-b">
-        <div className="max-w-6xl mx-auto px-4 py-4 flex items-center justify-between">
-          <div>
+       <div className="max-w-6xl mx-auto px-4 py-4 flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
+          <div className="w-full min-w-0">
             <div className="text-xs text-gray-500">Dashboard / Bills / Verify Slip</div>
             <div className="text-xl font-bold text-[#4a4a4a] mt-1">Verify Payment Slip</div>
             <div className="text-xs text-gray-500 mt-1">
-              Transaction ID: <span className="font-semibold text-gray-600">{billId}</span>
+              Transaction ID:{' '}
+              <span className="font-semibold text-gray-600 break-all">{billId}</span>
             </div>
-            {/* ✅ แก้ไข: เพิ่มการแสดงผล billTitle ตรงนี้ (Error หายแน่นอน) */}
             <div className="text-xs text-gray-500 mt-1">
               Bill: <span className="font-semibold text-gray-700">{billTitle || '-'}</span>
             </div>
           </div>
-          <button
-            type="button"
-            onClick={() => window.history.back()}
-            className="inline-flex items-center gap-2 px-4 py-2 rounded-xl border bg-white hover:bg-gray-50 text-sm font-semibold text-gray-700"
-          >
-            Back to List
-          </button>
+
+          <div className="w-full md:w-auto flex justify-start md:justify-end">
+            <button
+              type="button"
+              onClick={() => window.history.back()}
+className="inline-flex shrink-0 items-center justify-center gap-2 rounded-xl border border-[#fb8c00] bg-orange-50 px-4 py-2 text-sm font-semibold text-[#e65100] shadow-sm transition hover:bg-[#fff7ed] hover:shadow-md active:scale-[0.98]"            >
+              Back to History
+            </button>
+          </div>
         </div>
       </div>
 
@@ -334,7 +347,7 @@ export default function PaySlipClient({ billId }: { billId: string }) {
 
               <div className="mt-4 text-xs text-gray-500">PromptPay (Phone)</div>
               <div className="font-extrabold text-gray-900 mt-1">{owner?.promptPayPhone ?? '-'}</div>
-              
+
               <hr className="my-4 border-gray-200" />
 
               {/* ส่วนแสดงยอดเงินและช่องกรอก Tip */}
@@ -345,24 +358,24 @@ export default function PaySlipClient({ billId }: { billId: string }) {
                 </div>
 
                 <div className="flex justify-between items-center">
-                   <label htmlFor="tip-input" className="text-sm text-gray-900 flex items-center gap-1">
-                     ทิป (Tip) ❤️
-                   </label>
-                   <div className="relative text-gray-900">
-                     <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-900 text-sm">฿</span>
-                     <input
-                       id="tip-input"
-                       type="number"
-                       min="0"
-                       value={tip === 0 ? '' : tip}
-                       onChange={(e) => {
-                         const val = parseFloat(e.target.value);
-                         setTip(isNaN(val) ? 0 : val);
-                       }}
-                       placeholder="0"
-                       className="w-24 text-right rounded-lg border border-gray-900 py-1 pl-6 pr-2 text-sm focus:border-[#fb8c00] focus:ring-1 focus:ring-[#fb8c00] outline-none"
-                     />
-                   </div>
+                  <label htmlFor="tip-input" className="text-sm text-gray-900 flex items-center gap-1">
+                    ทิป (Tip) ❤️
+                  </label>
+                  <div className="relative text-gray-900">
+                    <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-900 text-sm">฿</span>
+                    <input
+                      id="tip-input"
+                      type="number"
+                      min="0"
+                      value={tip === 0 ? '' : tip}
+                      onChange={(e) => {
+                        const val = parseFloat(e.target.value);
+                        setTip(isNaN(val) ? 0 : val);
+                      }}
+                      placeholder="0"
+                      className="w-24 text-right rounded-lg border border-gray-900 py-1 pl-6 pr-2 text-sm focus:border-[#fb8c00] focus:ring-1 focus:ring-[#fb8c00] outline-none"
+                    />
+                  </div>
                 </div>
 
                 <div className="pt-2 border-t border-dashed border-gray-900 flex justify-between items-end">
@@ -384,9 +397,30 @@ export default function PaySlipClient({ billId }: { billId: string }) {
                 <>
                   {/* eslint-disable-next-line @next/next/no-img-element */}
                   <img src={qrDataUrl} alt="PromptPay QR" className="w-[320px] h-[320px] object-contain" />
+
                   <p className="mt-2 text-sm text-gray-500 font-medium">
                     ยอดสแกน: <span className="text-[#fb8c00]">{formatMoneyTHB(myShare + tip)}</span>
                   </p>
+
+                  <div className="mt-4 flex gap-3">
+                    <button
+                      type="button"
+                      onClick={handleSaveQr}
+                      className="px-4 py-2 rounded-xl bg-[#fb8c00] hover:bg-[#e65100] text-white text-sm font-semibold transition"
+                    >
+                      บันทึกรูป QR
+                    </button>
+
+                    {/* หากต้องการเปิดรูป QR ในแท็บใหม่ (ไม่แนะนำเพราะบางเบราว์เซอร์อาจบล็อก) */}
+                    {/* <a
+                      href={qrDataUrl}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="px-4 py-2 rounded-xl border border-gray-300 bg-white hover:bg-gray-50 text-sm font-semibold text-gray-700 transition"
+                    >
+                      เปิดรูป
+                    </a> */}
+                  </div>
                 </>
               ) : (
                 <div className="text-sm text-gray-400 text-center">
@@ -400,7 +434,7 @@ export default function PaySlipClient({ billId }: { billId: string }) {
 
         {/* ORIGINAL RECEIPT + verify */}
         <div className="bg-white rounded-2xl shadow-sm border overflow-hidden">
-           <div className="flex items-center justify-between px-5 py-4 border-b">
+          <div className="flex items-center justify-between px-5 py-4 border-b">
             <div className="font-semibold text-gray-800">ORIGINAL RECEIPT</div>
 
             <label className="inline-flex items-center gap-2 text-sm text-gray-600 cursor-pointer">
@@ -427,6 +461,8 @@ export default function PaySlipClient({ billId }: { billId: string }) {
             </div>
 
             <div className="mt-4 flex items-center justify-end gap-3">
+              <h1 className="text-sm text-black">* สลีปจากธนาคารกรุงเทพ<span className="font-bold text-red-500">กรุณารอ 7 นาที</span>
+                และสลีปจากธนาคารไทยพาณิชย์<span className="font-bold text-red-500">กรุณารอ 2 นาทีก่อนแนบสลิปตรวจสอบ</span> </h1>
               <button
                 type="button"
                 onClick={onSubmit}
@@ -440,7 +476,7 @@ export default function PaySlipClient({ billId }: { billId: string }) {
               </button>
             </div>
 
-                
+
 
             {result && !result.ok ? (
               <div className="mt-4 rounded-2xl border bg-red-50 text-red-700 px-4 py-3 text-sm">

@@ -267,7 +267,7 @@ export default function NotificationBell() {
           </div>
 
           <div className="px-4 py-3 border-t border-black/5 text-right">
-            <Link href="/settings" className="text-sm font-semibold text-[#fb8c00] hover:text-[#e65100]">
+            <Link   href="/settings?tab=notifications" className="text-sm font-semibold text-[#fb8c00] hover:text-[#e65100]">
               Notification settings
             </Link>
           </div>
