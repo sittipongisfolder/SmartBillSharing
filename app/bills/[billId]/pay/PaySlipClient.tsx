@@ -393,8 +393,10 @@ className="inline-flex shrink-0 items-center justify-center gap-2 rounded-xl bor
 
             {/* right QR */}
             <div className="rounded-2xl border bg-white p-5 flex items-center justify-center flex-col">
+              
               {qrDataUrl ? (
                 <>
+                 
                   {/* eslint-disable-next-line @next/next/no-img-element */}
                   <img src={qrDataUrl} alt="PromptPay QR" className="w-[320px] h-[320px] object-contain" />
 
@@ -411,6 +413,8 @@ className="inline-flex shrink-0 items-center justify-center gap-2 rounded-xl bor
                       บันทึกรูป QR
                     </button>
 
+                    
+
                     {/* หากต้องการเปิดรูป QR ในแท็บใหม่ (ไม่แนะนำเพราะบางเบราว์เซอร์อาจบล็อก) */}
                     {/* <a
                       href={qrDataUrl}
@@ -421,6 +425,7 @@ className="inline-flex shrink-0 items-center justify-center gap-2 rounded-xl bor
                       เปิดรูป
                     </a> */}
                   </div>
+                  <p className='text-red-500 mt-2 p-1'>* กรุณานำสลิปที่จ่ายแล้วมาแนบเพื่อตรวจสอบ</p>
                 </>
               ) : (
                 <div className="text-sm text-gray-400 text-center">
