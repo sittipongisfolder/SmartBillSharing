@@ -182,7 +182,10 @@ function normalizeItemsFromBillDoc(
   return (Array.isArray(raw) ? raw : []).map(normalizeOneItem);
 }
 
-export async function GET(_req: Request, ctx: { params: { billId: string } }) {
+export async function GET(
+  _req: Request,
+  ctx: { params: Promise<{ billId: string }> },
+) {
   const session = await getServerSession(authOptions);
   if (!session || session.user.role !== "admin") {
     return NextResponse.json(
@@ -191,7 +194,7 @@ export async function GET(_req: Request, ctx: { params: { billId: string } }) {
     );
   }
 
-  const billId = ctx.params.billId;
+  const { billId } = await ctx.params;
   if (!mongoose.Types.ObjectId.isValid(billId)) {
     return NextResponse.json(
       { ok: false, error: "Invalid billId" },
@@ -210,10 +213,8 @@ export async function GET(_req: Request, ctx: { params: { billId: string } }) {
 
   const bill = billLean as Record<string, unknown>;
 
-  // ✅ normalize items ส่งออกมาเสมอ
   const itemsNormalized = normalizeItemsFromBillDoc(bill);
 
-  // รองรับทั้ง ownerId / createdBy
   const ownerIdRaw = bill.ownerId ?? bill.createdBy;
   const ownerId = ownerIdRaw ? String(ownerIdRaw) : null;
 
@@ -227,7 +228,7 @@ export async function GET(_req: Request, ctx: { params: { billId: string } }) {
     bill: {
       ...bill,
       id: String(bill._id),
-      items: itemsNormalized, // ✅ ส่ง items แบบ normalize เสมอ
+      items: itemsNormalized,
       owner: owner
         ? {
             id: String(owner._id),
@@ -241,7 +242,10 @@ export async function GET(_req: Request, ctx: { params: { billId: string } }) {
   });
 }
 
-export async function PUT(req: Request, ctx: { params: { billId: string } }) {
+export async function PUT(
+  req: Request,
+  ctx: { params: Promise<{ billId: string }> },
+) {
   const session = await getServerSession(authOptions);
   if (!session || session.user.role !== "admin") {
     return NextResponse.json(
@@ -250,7 +254,7 @@ export async function PUT(req: Request, ctx: { params: { billId: string } }) {
     );
   }
 
-  const billId = ctx.params.billId;
+  const { billId } = await ctx.params;
   if (!mongoose.Types.ObjectId.isValid(billId)) {
     return NextResponse.json(
       { ok: false, error: "Invalid billId" },
@@ -290,11 +294,9 @@ export async function PUT(req: Request, ctx: { params: { billId: string } }) {
 
   if (b.status === "open" || b.status === "closed") update.status = b.status;
 
-  // ✅ normalize items ที่รับเข้ามา และรองรับ Owner/SharedWith
   if (Array.isArray(b.items)) {
     const normalized = b.items.map(normalizeOneItem);
 
-    // ✅ อัปเดต total จากรายการให้ตรงเสมอ
     const totalFromItems = round2(
       normalized.reduce((acc, it) => acc + it.line_total, 0),
     );
@@ -321,7 +323,6 @@ export async function PUT(req: Request, ctx: { params: { billId: string } }) {
     );
 
   const updated = updatedLean as Record<string, unknown>;
-  // ✅ ส่งกลับแบบ normalize เช่นกัน
   const itemsNormalized = normalizeItemsFromBillDoc(updated);
 
   return NextResponse.json({
