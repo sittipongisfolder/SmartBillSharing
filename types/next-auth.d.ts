@@ -1,16 +1,37 @@
-import 'next-auth';
+import "next-auth";
+import "next-auth/jwt";
 
-declare module 'next-auth' {
+export type UserRole = "user" | "admin";
+
+declare module "next-auth" {
   interface Session {
     user: {
-      promptPayPhone: string;
       id: string;
-      _id: string;
-      name: string;
-      email: string;
-      role: string;
-      bank: string;
-      bankAccountNumber: string;
-    };
+      _id?: string;
+      role: UserRole;
+      bank?: string;
+      bankAccountNumber?: string;
+      promptPayPhone?: string;
+    } & DefaultSession["user"];
+  }
+
+  interface User {
+    id: string;
+    _id?: string;
+    role: UserRole;
+    bank?: string;
+    bankAccountNumber?: string;
+    promptPayPhone?: string;
+  }
+}
+
+declare module "next-auth/jwt" {
+  interface JWT {
+    id?: string;
+    _id?: string;
+    role?: UserRole;
+    bank?: string;
+    bankAccountNumber?: string;
+    promptPayPhone?: string;
   }
 }
