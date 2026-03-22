@@ -11,11 +11,13 @@ export default function Login() {
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
   const [showPassword, setShowPassword] = useState(false);
+  const [loading, setLoading] = useState(false);
 
   const router = useRouter();
 
   const handleLoginSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
+    setLoading(true);
     try {
       const res = await signIn('credentials', {
         redirect: false,
@@ -25,13 +27,27 @@ export default function Login() {
 
       if (res?.error) {
         setError('เข้าสู่ระบบล้มเหลว รหัสผ่านหรือชื่อผู้ใช้ไม่ถูกต้อง');
+        setLoading(false);
         return;
       }
 
-      router.push('/dashboard');
+      // รอสักครู่เพื่อให้ NextAuth update session
+      await new Promise((resolve) => setTimeout(resolve, 500));
+
+      // เรียก API เพื่อดึง session ของผู้ใช้ที่เพิ่งเข้าสู่ระบบ
+      const sessionRes = await fetch('/api/auth/session');
+      const sessionData: { user?: { role?: string } } = await sessionRes.json();
+      
+      // ถ้าเป็น admin ให้ไปหน้า admin dashboard ถ้าไม่เป็น ให้ไปหน้าปกติ
+      if (sessionData?.user?.role === 'admin') {
+        router.push('/admin');
+      } else {
+        router.push('/dashboard');
+      }
     } catch (error) {
       console.error('Error during login:', error);
       setError('Something went wrong. Please try again.');
+      setLoading(false);
     }
   };
 
@@ -118,11 +134,14 @@ export default function Login() {
             <div className="pt-2">
               <button
                 type="submit"
-                className="w-full text-white font-bold py-4 rounded-xl shadow-lg shadow-orange-200 hover:shadow-orange-300
-                           hover:-translate-y-0.5 transition-all duration-300 active:scale-[0.98]
-                           bg-[linear-gradient(135deg,#fb8c00_0%,#e65100_100%)]"
+                disabled={loading}
+                className={`w-full text-white font-bold py-4 rounded-xl shadow-lg transition-all duration-300 ${
+                  loading
+                    ? 'bg-gray-400 cursor-not-allowed'
+                    : 'shadow-orange-200 hover:shadow-orange-300 hover:-translate-y-0.5 active:scale-[0.98] bg-[linear-gradient(135deg,#fb8c00_0%,#e65100_100%)]'
+                }`}
               >
-                Sign In
+                {loading ? 'กำลังเข้าสู่ระบบ...' : 'Sign In'}
               </button>
             </div>
           </form>
