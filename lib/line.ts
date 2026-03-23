@@ -16,6 +16,12 @@ export function verifyLineSignature(rawBody: string, signature: string, channelS
 }
 
 type LineTextMessage = { type: "text"; text: string };
+type LineImageMessage = {
+  type: "image";
+  originalContentUrl: string;
+  previewImageUrl: string;
+};
+type LinePushMessage = LineTextMessage | LineImageMessage;
 
 async function lineFetch(path: string, body: unknown) {
   const token = process.env.LINE_CHANNEL_ACCESS_TOKEN;
@@ -43,5 +49,20 @@ export async function replyText(replyToken: string, text: string) {
 
 export async function pushText(lineUserId: string, text: string) {
   const payload = { to: lineUserId, messages: [{ type: "text", text } satisfies LineTextMessage] };
+  await lineFetch("/message/push", payload);
+}
+
+export async function pushTextAndImage(lineUserId: string, text: string, imageUrl: string) {
+  const payload = {
+    to: lineUserId,
+    messages: [
+      { type: "text", text } satisfies LineTextMessage,
+      {
+        type: "image",
+        originalContentUrl: imageUrl,
+        previewImageUrl: imageUrl,
+      } satisfies LineImageMessage,
+    ] satisfies LinePushMessage[],
+  };
   await lineFetch("/message/push", payload);
 }

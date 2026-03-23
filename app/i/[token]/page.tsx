@@ -51,7 +51,7 @@ export default async function InviteJoinPage({
               name="displayName"
               required
               maxLength={80}
-              className="mt-1 w-full rounded-xl border px-3 py-2 outline-none focus:ring"
+              className="mt-1 w-full rounded-xl border px-3 py-2 text-black outline-none focus:ring"
               placeholder="เช่น นัท / มิกซ์ / ฝ้าย"
             />
           </label>

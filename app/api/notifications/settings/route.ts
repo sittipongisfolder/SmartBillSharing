@@ -11,6 +11,7 @@ export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
 const ALL_TYPES = [
+  'BILL_CREATED_OWNER',
   'BILL_ADDED_YOU',
   'BILL_UPDATED',
   'BILL_STATUS_CHANGED',
@@ -18,7 +19,6 @@ const ALL_TYPES = [
   'DAILY_UNPAID_SUMMARY',
   'GROUP_MEMBER_CHANGED',
   'GROUP_UPDATED',
-  'GROUP_NEW_BILL',
 ] as const satisfies readonly NotificationType[];
 
 type SettingsDTO = {

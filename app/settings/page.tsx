@@ -479,14 +479,14 @@ function AccountInfoCard() {
 
 function NotificationsCard() {
   type NotificationType =
+    | 'BILL_CREATED_OWNER'
     | 'BILL_ADDED_YOU'
     | 'BILL_UPDATED'
     | 'BILL_STATUS_CHANGED'
     | 'BILL_CLOSED'
     | 'DAILY_UNPAID_SUMMARY'
     | 'GROUP_MEMBER_CHANGED'
-    | 'GROUP_UPDATED'
-    | 'GROUP_NEW_BILL';
+    | 'GROUP_UPDATED';
 
   type Settings = {
     enabledTypes: NotificationType[];
@@ -528,6 +528,7 @@ function NotificationsCard() {
   const [copied, setCopied] = useState(false);
 
   const TYPES: Array<{ key: NotificationType; label: string; desc: string }> = [
+    { key: 'BILL_CREATED_OWNER', label: 'Bill created (owner)', desc: 'คุณสร้างบิลสำเร็จ พร้อมรายละเอียดบิล' },
     { key: 'BILL_ADDED_YOU', label: 'Added to bill', desc: 'ถูกเพิ่มเข้าบิลใหม่' },
     { key: 'BILL_UPDATED', label: 'Bill updated', desc: 'ชื่อบิล/เมนู/ราคา/ยอด/วิธีหาร/สมาชิกถูกแก้ไข' },
     { key: 'BILL_STATUS_CHANGED', label: 'Payment status changed', desc: 'มีคนจ่าย/อัปโหลดสลิป ทำให้สถานะคุณเปลี่ยน' },
@@ -535,7 +536,6 @@ function NotificationsCard() {
     { key: 'DAILY_UNPAID_SUMMARY', label: 'Daily unpaid summary', desc: 'แจ้งเตือนสรุปยอดค้างทุกวัน + ค้างกี่วัน' },
     { key: 'GROUP_MEMBER_CHANGED', label: 'Group members changed', desc: 'เพิ่ม/ลบสมาชิกในกลุ่ม' },
     { key: 'GROUP_UPDATED', label: 'Group updated', desc: 'เปลี่ยนชื่อกลุ่ม/รูปกลุ่ม' },
-    { key: 'GROUP_NEW_BILL', label: 'New bill in followed group', desc: 'มีบิลใหม่ในกลุ่มที่ติดตาม' },
   ];
 
   const formatTH = (iso: string) =>

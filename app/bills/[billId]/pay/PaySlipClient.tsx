@@ -2,10 +2,9 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useSession } from 'next-auth/react';
-import { useRouter } from 'next/navigation';
-import { ArrowLeftIcon } from '@heroicons/react/24/solid';
+import { useRouter, useSearchParams } from 'next/navigation';
 
-// ... (Types เดิมทั้งหมดคงเดิม) ...
+
 type PaymentStatus = 'unpaid' | 'pending' | 'paid';
 
 type Owner = {
@@ -16,7 +15,9 @@ type Owner = {
 };
 
 type Participant = {
+  kind?: 'user' | 'guest_placeholder' | 'guest';
   userId?: string | { _id: string };
+  guestId?: string | { _id: string };
   name?: string;
   amount?: number;
   paymentStatus?: 'unpaid' | 'paid';
@@ -47,14 +48,34 @@ type ApiOk = {
   billId: string;
   billStatus: PaymentStatus;
   updatedParticipant: {
-    userId: string;
+    userId?: string;
+    guestId?: string;
     paymentStatus: 'unpaid' | 'paid';
     slipInfo?: SlipInfo;
     paidAt?: string | null;
   };
 };
+
 type ApiErr = { ok: false; message: string };
 type ApiRes = ApiOk | ApiErr;
+
+type GuestAccessBillOk = {
+  ok: true;
+  bill: BillDoc;
+  guest: {
+    guestId: string;
+    name: string;
+    amount: number;
+    paymentStatus: 'unpaid' | 'paid';
+  };
+};
+
+type GuestAccessBillErr = {
+  ok: false;
+  error: string;
+};
+
+type GuestAccessBillRes = GuestAccessBillOk | GuestAccessBillErr;
 
 function cx(...classes: Array<string | false | null | undefined>) {
   return classes.filter(Boolean).join(' ');
@@ -64,20 +85,28 @@ function digitsOnly(s?: string) {
   return (s ?? '').replace(/\D/g, '');
 }
 
-function getId(v: Participant['userId']) {
+function getUserId(v: Participant['userId']) {
   if (!v) return '';
   if (typeof v === 'string') return v;
   return v._id;
 }
 
+
+
 function formatMoneyTHB(n: number) {
   if (!Number.isFinite(n)) return '-';
-  return `฿${n.toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+  return `฿${n.toLocaleString('th-TH', {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  })}`;
 }
 
 /** ---- dynamic import helpers ---- */
 type GeneratePayloadFn = (target: string, opts?: { amount?: number }) => string;
-type ToDataURLFn = (text: string, options?: Record<string, unknown>) => Promise<string>;
+type ToDataURLFn = (
+  text: string,
+  options?: Record<string, unknown>
+) => Promise<string>;
 
 function isRecord(v: unknown): v is Record<string, unknown> {
   return typeof v === 'object' && v !== null;
@@ -106,18 +135,27 @@ function pickToDataURL(mod: unknown): ToDataURLFn {
   throw new Error('qrcode: toDataURL not found');
 }
 
-export default function PaySlipClient({ billId }: { billId: string }) {
-  const HISTORY_PATH = '/history';
+export default function PaySlipClient({ billId, forcedGuestAccessToken }: { billId: string; forcedGuestAccessToken?: string }) {
   const router = useRouter();
+  const searchParams = useSearchParams();
   const { data: session } = useSession();
-  const myId = (session?.user as { id?: string } | undefined)?.id;
+
+  const myUserId = (session?.user as { id?: string } | undefined)?.id;
+  const guestAccessToken =
+    forcedGuestAccessToken?.trim() ||
+    String(searchParams.get('guestAccessToken') ?? '').trim();
+  const isGuestMode = guestAccessToken.length > 0;
+
+  const HISTORY_PATH = '/history';
+  const guestBackPath = isGuestMode
+    ? `/guest/access/${encodeURIComponent(guestAccessToken)}`
+    : HISTORY_PATH;
 
   // ---------- slip upload ----------
   const [file, setFile] = useState<File | null>(null);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [loading, setLoading] = useState<boolean>(false);
   const [result, setResult] = useState<ApiRes | null>(null);
-
 
   // ---------- redirect countdown ----------
   const [redirectIn, setRedirectIn] = useState<number | null>(null);
@@ -140,6 +178,7 @@ export default function PaySlipClient({ billId }: { billId: string }) {
   const [billTitle, setBillTitle] = useState<string>('');
   const [owner, setOwner] = useState<Owner | null>(null);
   const [myShare, setMyShare] = useState<number>(0);
+  const [viewerName, setViewerName] = useState<string>('');
 
   // State สำหรับเก็บ Tip
   const [tip, setTip] = useState<number>(0);
@@ -162,9 +201,45 @@ export default function PaySlipClient({ billId }: { billId: string }) {
   // fetch bill
   useEffect(() => {
     let alive = true;
+
     (async () => {
       try {
-        const res = await fetch(`/api/bills/${billId}`, { credentials: 'include' });
+        if (isGuestMode) {
+          const res = await fetch(`/api/guest/access/${encodeURIComponent(guestAccessToken)}/bill`, {
+            credentials: 'include',
+            cache: 'no-store',
+          });
+
+          const json = (await res.json()) as GuestAccessBillRes;
+
+          if (!alive) return;
+
+          if (!res.ok || !json.ok) {
+            setOwner(null);
+            setBillTitle('');
+            setMyShare(0);
+            setViewerName('');
+            return;
+          }
+
+          const b = json.bill;
+          setBillTitle(b.title ?? '');
+          const createdByObj =
+            typeof b.createdBy === 'object' && b.createdBy !== null
+              ? (b.createdBy as Owner)
+              : null;
+
+          setOwner(createdByObj);
+          setMyShare(Number(json.guest.amount) || 0);
+          setViewerName(json.guest.name ?? 'Guest');
+          return;
+        }
+
+        const res = await fetch(`/api/bills/${billId}`, {
+          credentials: 'include',
+          cache: 'no-store',
+        });
+
         const json = (await res.json()) as BillGetRes;
         if (!alive) return;
 
@@ -172,30 +247,41 @@ export default function PaySlipClient({ billId }: { billId: string }) {
           setOwner(null);
           setBillTitle('');
           setMyShare(0);
+          setViewerName('');
           return;
         }
 
         const b = json.bill;
         setBillTitle(b.title ?? '');
+
         const createdByObj =
-          typeof b.createdBy === 'object' && b.createdBy !== null ? (b.createdBy as Owner) : null;
+          typeof b.createdBy === 'object' && b.createdBy !== null
+            ? (b.createdBy as Owner)
+            : null;
+
         setOwner(createdByObj);
 
-        if (myId) {
-          const me = b.participants.find((p) => getId(p.userId) === myId);
+        if (myUserId) {
+          const me = b.participants.find((p) => getUserId(p.userId) === myUserId);
           setMyShare(Number(me?.amount) || 0);
+          setViewerName(me?.name ?? session?.user?.name ?? '');
         } else {
           setMyShare(0);
+          setViewerName('');
         }
       } catch {
         if (!alive) return;
         setOwner(null);
         setBillTitle('');
         setMyShare(0);
+        setViewerName('');
       }
     })();
-    return () => { alive = false; };
-  }, [billId, myId]);
+
+    return () => {
+      alive = false;
+    };
+  }, [billId, guestAccessToken, isGuestMode, myUserId, session?.user?.name]);
 
   // QR Logic
   useEffect(() => {
@@ -213,16 +299,18 @@ export default function PaySlipClient({ billId }: { billId: string }) {
         return;
       }
 
-      // คำนวณยอดรวม (ค่าอาหาร + ทิป)
       const totalAmount = Number(myShare) + Number(tip);
       const withAmount = Number.isFinite(totalAmount) && totalAmount > 0;
 
       try {
-        const [ppMod, qrMod] = await Promise.all([import('promptpay-qr'), import('qrcode')]);
+        const [ppMod, qrMod] = await Promise.all([
+          import('promptpay-qr'),
+          import('qrcode'),
+        ]);
+
         const gen = pickGeneratePayload(ppMod);
         const toDataURL = pickToDataURL(qrMod);
 
-        // ส่งยอดรวมไปสร้าง QR
         const payload = gen(phone, withAmount ? { amount: totalAmount } : undefined);
         const url = await toDataURL(payload, { width: 320, margin: 1 });
 
@@ -236,7 +324,9 @@ export default function PaySlipClient({ billId }: { billId: string }) {
       }
     })();
 
-    return () => { alive = false; };
+    return () => {
+      alive = false;
+    };
   }, [owner?.promptPayPhone, myShare, tip]);
 
   const canSubmit = useMemo(() => Boolean(file) && !loading, [file, loading]);
@@ -254,6 +344,7 @@ export default function PaySlipClient({ billId }: { billId: string }) {
 
   async function onSubmit() {
     if (!file) return;
+
     clearTimers();
     setLoading(true);
     setResult(null);
@@ -263,7 +354,9 @@ export default function PaySlipClient({ billId }: { billId: string }) {
       form.append('file', file);
       form.append('autoPaid', 'true');
 
-
+      if (isGuestMode) {
+        form.append('guestAccessToken', guestAccessToken);
+      }
 
       const res = await fetch(`/api/bills/${billId}/slip-check`, {
         method: 'POST',
@@ -275,17 +368,23 @@ export default function PaySlipClient({ billId }: { billId: string }) {
       if (typeof json === 'object' && json !== null && 'ok' in json) {
         const parsed = json as ApiRes;
         setResult(parsed);
+
         if (parsed.ok && parsed.updatedParticipant.paymentStatus === 'paid') {
           setResult({
             ...parsed,
-            message: 'โอนเงินสำเร็จแล้ว ✅ กำลังพากลับไปหน้า History...',
+            message: isGuestMode
+              ? 'โอนเงินสำเร็จแล้ว ✅ กำลังพากลับไปหน้าติดตามบิล...'
+              : 'โอนเงินสำเร็จแล้ว ✅ กำลังพากลับไปหน้า History...',
           });
+
           setRedirectIn(5);
+
           intervalRef.current = window.setInterval(() => {
             setRedirectIn((prev) => (prev === null ? null : prev - 1));
           }, 1000);
+
           timeoutRef.current = window.setTimeout(() => {
-            router.push(HISTORY_PATH);
+            router.push(isGuestMode ? guestBackPath : HISTORY_PATH);
           }, 5000);
         }
       } else {
@@ -299,13 +398,39 @@ export default function PaySlipClient({ billId }: { billId: string }) {
     }
   }
 
+  const [copied, setCopied] = useState(false);
+  const [guestSavedLink, setGuestSavedLink] = useState('');
+
+  useEffect(() => {
+    if (!isGuestMode || typeof window === 'undefined') {
+      setGuestSavedLink('');
+      return;
+    }
+
+    setGuestSavedLink(`${window.location.origin}/guest/access/${encodeURIComponent(guestAccessToken)}/pay`);
+  }, [guestAccessToken, isGuestMode]);
+
+  async function handleCopyGuestLink() {
+    if (!guestSavedLink) return;
+
+    try {
+      await navigator.clipboard.writeText(guestSavedLink);
+      setCopied(true);
+      window.setTimeout(() => setCopied(false), 1500);
+    } catch {
+      setCopied(false);
+    }
+  }
+
   return (
     <div className="min-h-screen bg-[radial-gradient(circle_at_top_right,#fff5e6_0%,#ffffff_40%,#fff0e0_100%)]">
       {/* Header */}
       <div className="sticky top-0 z-10 bg-white border-b">
-       <div className="max-w-6xl mx-auto px-4 py-4 flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
+        <div className="max-w-6xl mx-auto px-4 py-4 flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
           <div className="w-full min-w-0">
-            <div className="text-xs text-gray-500">Dashboard / Bills / Verify Slip</div>
+            <div className="text-xs text-gray-500">
+              {isGuestMode ? 'Guest Payment / Verify Slip' : 'Dashboard / Bills / Verify Slip'}
+            </div>
             <div className="text-xl font-bold text-[#4a4a4a] mt-1">Verify Payment Slip</div>
             <div className="text-xs text-gray-500 mt-1">
               Transaction ID:{' '}
@@ -314,16 +439,57 @@ export default function PaySlipClient({ billId }: { billId: string }) {
             <div className="text-xs text-gray-500 mt-1">
               Bill: <span className="font-semibold text-gray-700">{billTitle || '-'}</span>
             </div>
+            {viewerName ? (
+              <div className="text-xs text-gray-500 mt-1">
+                Paying as: <span className="font-semibold text-gray-700">{viewerName}</span>
+              </div>
+            ) : null}
           </div>
+          {isGuestMode ? (
+            <div className="mx-auto w-full max-w-[720px] rounded-2xl border border-gray-200 bg-white p-4 shadow-sm sm:p-5">
+              <div className="text-base font-bold text-gray-900 sm:text-lg">
+                Guest Payment Link
+              </div>
 
-          <div className="w-full md:w-auto flex justify-start md:justify-end">
-            <button
-              type="button"
-              onClick={() => window.history.back()}
-className="inline-flex shrink-0 items-center justify-center gap-2 rounded-xl border border-[#fb8c00] bg-orange-50 px-4 py-2 text-sm font-semibold text-[#e65100] shadow-sm transition hover:bg-[#fff7ed] hover:shadow-md active:scale-[0.98]"            >
-              Back to History
-            </button>
-          </div>
+              <p className="mt-1 text-sm leading-6 text-gray-600">
+                บันทึกลิงก์นี้ไว้เพื่อกลับมาชำระเงินหรือแนบสลิปภายหลัง
+              </p>
+
+              <div className="mt-4 flex flex-col gap-3 sm:flex-row sm:items-center">
+                <div className="min-w-0 flex-1">
+                  <input
+                    value={guestSavedLink}
+                    readOnly
+                    onFocus={(e) => e.currentTarget.select()}
+                    className="h-11 w-full truncate rounded-xl border border-gray-300 bg-gray-50 px-4 text-sm text-gray-700 outline-none focus:border-[#fb8c00] focus:ring-2 focus:ring-orange-100"
+                  />
+                </div>
+
+                <button
+                  type="button"
+                  onClick={handleCopyGuestLink}
+                  className="inline-flex h-11 shrink-0 items-center justify-center rounded-xl bg-[#fb8c00] px-5 text-sm font-semibold text-white transition hover:bg-[#e65100] active:scale-[0.98] sm:min-w-[132px]"
+                >
+                  {copied ? 'คัดลอกแล้ว' : 'คัดลอกลิงก์'}
+                </button>
+              </div>
+
+              <p className="mt-3 text-xs leading-5 text-gray-500">
+                เมื่อโอนเสร็จแล้ว ให้กลับมาที่ลิงก์นี้เพื่อแนบสลิปตรวจสอบ
+              </p>
+            </div>
+          ) : null}
+          {!isGuestMode && (
+            <div className="w-full md:w-auto flex justify-start md:justify-end">
+              <button
+                type="button"
+                onClick={() => router.push(HISTORY_PATH)}
+                className="inline-flex shrink-0 items-center justify-center gap-2 rounded-xl border border-[#fb8c00] bg-orange-50 px-4 py-2 text-sm font-semibold text-[#e65100] shadow-sm transition hover:bg-[#fff7ed] hover:shadow-md active:scale-[0.98]"
+              >
+                Back
+              </button>
+            </div>
+          )}
         </div>
       </div>
 
@@ -350,7 +516,6 @@ className="inline-flex shrink-0 items-center justify-center gap-2 rounded-xl bor
 
               <hr className="my-4 border-gray-200" />
 
-              {/* ส่วนแสดงยอดเงินและช่องกรอก Tip */}
               <div className="space-y-3">
                 <div className="flex justify-between items-center">
                   <span className="text-sm text-gray-500">ค่าใช้จ่าย (Your Share)</span>
@@ -362,7 +527,9 @@ className="inline-flex shrink-0 items-center justify-center gap-2 rounded-xl bor
                     ทิป (Tip) ❤️
                   </label>
                   <div className="relative text-gray-900">
-                    <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-900 text-sm">฿</span>
+                    <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-900 text-sm">
+                      ฿
+                    </span>
                     <input
                       id="tip-input"
                       type="number"
@@ -370,7 +537,7 @@ className="inline-flex shrink-0 items-center justify-center gap-2 rounded-xl bor
                       value={tip === 0 ? '' : tip}
                       onChange={(e) => {
                         const val = parseFloat(e.target.value);
-                        setTip(isNaN(val) ? 0 : val);
+                        setTip(Number.isNaN(val) ? 0 : val);
                       }}
                       placeholder="0"
                       className="w-24 text-right rounded-lg border border-gray-900 py-1 pl-6 pr-2 text-sm focus:border-[#fb8c00] focus:ring-1 focus:ring-[#fb8c00] outline-none"
@@ -393,15 +560,18 @@ className="inline-flex shrink-0 items-center justify-center gap-2 rounded-xl bor
 
             {/* right QR */}
             <div className="rounded-2xl border bg-white p-5 flex items-center justify-center flex-col">
-              
               {qrDataUrl ? (
                 <>
-                 
                   {/* eslint-disable-next-line @next/next/no-img-element */}
-                  <img src={qrDataUrl} alt="PromptPay QR" className="w-[320px] h-[320px] object-contain" />
+                  <img
+                    src={qrDataUrl}
+                    alt="PromptPay QR"
+                    className="w-[320px] h-[320px] object-contain"
+                  />
 
                   <p className="mt-2 text-sm text-gray-500 font-medium">
-                    ยอดสแกน: <span className="text-[#fb8c00]">{formatMoneyTHB(myShare + tip)}</span>
+                    ยอดสแกน:{' '}
+                    <span className="text-[#fb8c00]">{formatMoneyTHB(myShare + tip)}</span>
                   </p>
 
                   <div className="mt-4 flex gap-3">
@@ -412,20 +582,11 @@ className="inline-flex shrink-0 items-center justify-center gap-2 rounded-xl bor
                     >
                       บันทึกรูป QR
                     </button>
-
-                    
-
-                    {/* หากต้องการเปิดรูป QR ในแท็บใหม่ (ไม่แนะนำเพราะบางเบราว์เซอร์อาจบล็อก) */}
-                    {/* <a
-                      href={qrDataUrl}
-                      target="_blank"
-                      rel="noreferrer"
-                      className="px-4 py-2 rounded-xl border border-gray-300 bg-white hover:bg-gray-50 text-sm font-semibold text-gray-700 transition"
-                    >
-                      เปิดรูป
-                    </a> */}
                   </div>
-                  <p className='text-red-500 mt-2 p-1'>* กรุณานำสลิปที่จ่ายแล้วมาแนบเพื่อตรวจสอบ</p>
+
+                  <p className="text-red-500 mt-2 p-1">
+                    * กรุณานำสลิปที่จ่ายแล้วมาแนบเพื่อตรวจสอบ
+                  </p>
                 </>
               ) : (
                 <div className="text-sm text-gray-400 text-center">
@@ -449,7 +610,9 @@ className="inline-flex shrink-0 items-center justify-center gap-2 rounded-xl bor
                 className="hidden"
                 onChange={(e) => setFile(e.target.files?.[0] ?? null)}
               />
-              <span className="px-4 py-2 rounded-xl border bg-white hover:bg-gray-50">เลือกไฟล์</span>
+              <span className="px-4 py-2 rounded-xl border bg-white hover:bg-gray-50">
+                เลือกไฟล์
+              </span>
             </label>
           </div>
 
@@ -457,7 +620,11 @@ className="inline-flex shrink-0 items-center justify-center gap-2 rounded-xl bor
             <div className="rounded-2xl border bg-gray-50 overflow-hidden">
               {previewUrl ? (
                 // eslint-disable-next-line @next/next/no-img-element
-                <img src={previewUrl} alt="slip preview" className="w-full h-[520px] object-contain" />
+                <img
+                  src={previewUrl}
+                  alt="slip preview"
+                  className="w-full h-[520px] object-contain"
+                />
               ) : (
                 <div className="h-[520px] flex items-center justify-center text-gray-400 text-sm">
                   ยังไม่ได้เลือกรูปสลิป
@@ -466,22 +633,31 @@ className="inline-flex shrink-0 items-center justify-center gap-2 rounded-xl bor
             </div>
 
             <div className="mt-4 flex items-center justify-end gap-3">
-              <h1 className="text-sm text-black">* สลีปจากธนาคารกรุงเทพ<span className="font-bold text-red-500">กรุณารอ 7 นาที</span>
-                และสลีปจากธนาคารไทยพาณิชย์<span className="font-bold text-red-500">กรุณารอ 2 นาทีก่อนแนบสลิปตรวจสอบ</span> </h1>
+              <h1 className="text-sm text-black">
+                * สลีปจากธนาคารกรุงเทพ
+                <span className="font-bold text-red-500">กรุณารอ 7 นาที</span>
+                และสลีปจากธนาคารไทยพาณิชย์
+                <span className="font-bold text-red-500">กรุณารอ 2 นาทีก่อนแนบสลิปตรวจสอบ</span>
+              </h1>
+
               <button
                 type="button"
                 onClick={onSubmit}
                 disabled={!canSubmit || redirectIn !== null}
                 className={cx(
                   'px-5 py-3 rounded-xl font-semibold text-white transition',
-                  canSubmit && redirectIn === null ? 'bg-[#fb8c00] hover:bg-[#e65100]' : 'bg-gray-300 cursor-not-allowed'
+                  canSubmit && redirectIn === null
+                    ? 'bg-[#fb8c00] hover:bg-[#e65100]'
+                    : 'bg-gray-300 cursor-not-allowed'
                 )}
               >
-                {loading ? 'Verifying...' : redirectIn !== null ? `Redirecting (${redirectIn})` : 'Verify Slip'}
+                {loading
+                  ? 'Verifying...'
+                  : redirectIn !== null
+                    ? `Redirecting (${redirectIn})`
+                    : 'Verify Slip'}
               </button>
             </div>
-
-
 
             {result && !result.ok ? (
               <div className="mt-4 rounded-2xl border bg-red-50 text-red-700 px-4 py-3 text-sm">
@@ -498,15 +674,7 @@ className="inline-flex shrink-0 items-center justify-center gap-2 rounded-xl bor
         </div>
       </div>
 
-      {/* Floating back button */}
-      <button
-        onClick={() => window.history.back()}
-        className="fixed top-5 left-5 flex items-center gap-2 px-2 py-2 bg-[#fb8c00] text-white rounded-xl shadow-md hover:shadow-xl hover:scale-105 transition-all duration-300"
-        type="button"
-      >
-        <ArrowLeftIcon className="h-5 w-5" />
-        <span className="font-medium">Go Back</span>
-      </button>
+
     </div>
   );
 }

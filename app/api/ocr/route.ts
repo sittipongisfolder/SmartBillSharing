@@ -17,6 +17,30 @@ type OCRParsedPayload = {
   raw_text: string | null;
 };
 
+type TyphoonTextPart = { type: "text"; text: string };
+type TyphoonImagePart = { type: "image_url"; image_url: { url: string } };
+type TyphoonUserContent = Array<TyphoonTextPart | TyphoonImagePart>;
+type TyphoonMessage =
+  | { role: "system"; content: string }
+  | { role: "user"; content: TyphoonUserContent };
+
+type TyphoonResponse = {
+  choices?: Array<{ message?: { content?: string } }>;
+  error?: { message?: string; type?: string; code?: string };
+  message?: string;
+};
+
+const ALLOWED_MIME_TYPES = new Set([
+  "image/jpeg",
+  "image/jpg",
+  "image/png",
+  "application/pdf",
+]);
+
+const MAX_FILE_SIZE_BYTES = 12 * 1024 * 1024; // 12MB
+const OCR_TIMEOUT_MS = 60_000;
+const TEXT_PARSE_TIMEOUT_MS = 45_000;
+
 function stripCodeFences(s: string) {
   const m = s.match(/```(?:json)?\s*([\s\S]*?)\s*```/i);
   return (m?.[1] ?? s).trim();
@@ -29,10 +53,19 @@ function extractJsonObject(text: string): unknown | null {
     return JSON.parse(t) as unknown;
   } catch {}
 
-  const first = t.indexOf("{");
-  const last = t.lastIndexOf("}");
-  if (first >= 0 && last > first) {
-    const slice = t.slice(first, last + 1);
+  const firstObj = t.indexOf("{");
+  const lastObj = t.lastIndexOf("}");
+  if (firstObj >= 0 && lastObj > firstObj) {
+    const slice = t.slice(firstObj, lastObj + 1);
+    try {
+      return JSON.parse(slice) as unknown;
+    } catch {}
+  }
+
+  const firstArr = t.indexOf("[");
+  const lastArr = t.lastIndexOf("]");
+  if (firstArr >= 0 && lastArr > firstArr) {
+    const slice = t.slice(firstArr, lastArr + 1);
     try {
       return JSON.parse(slice) as unknown;
     } catch {}
@@ -46,7 +79,14 @@ function isRecord(v: unknown): v is Record<string, unknown> {
 }
 
 function toNumber(v: unknown, fallback = 0) {
-  const n = typeof v === "number" ? v : Number(String(v).replace(/,/g, ""));
+  const n =
+    typeof v === "number"
+      ? v
+      : Number(
+          String(v ?? "")
+            .replace(/,/g, "")
+            .replace(/[^\d.-]/g, ""),
+        );
   return Number.isFinite(n) ? n : fallback;
 }
 
@@ -67,7 +107,6 @@ function positiveNumberOrNull(v: unknown) {
   return Number.isFinite(n) && n > 0 ? round2(n) : null;
 }
 
-// ✅ กัน HTML หลุดเข้า raw_text
 function htmlToText(input: string) {
   const s = input || "";
   if (!s) return s;
@@ -86,7 +125,6 @@ function htmlToText(input: string) {
     .trim();
 }
 
-// ✅ ช่วยแตกบรรทัดเมื่อ raw_text ยุบเป็นก้อนเดียว
 function normalizeRawTextForParsing(text: string) {
   let s = (text || "").trim();
   if (!s) return s;
@@ -181,9 +219,7 @@ function isBadTitleCandidate(line: string) {
     "ทอน",
   ];
 
-  if (badWords.some((w) => upper.includes(w))) return true;
-
-  return false;
+  return badWords.some((w) => upper.includes(w));
 }
 
 function scoreTitleCandidate(line: string) {
@@ -390,7 +426,6 @@ function parseItemsFromText(text: string) {
     const hasMoney = /\d{1,3}(?:,\d{3})*\.\d{2}/.test(line0);
     const hasLetters = /[A-Za-z\u0E00-\u0E7F]/.test(line0);
 
-    // modifier เช่น "1 x Bubble" (ไม่มีราคา) → แนบกับ item ก่อนหน้า
     const mOpt = line0.match(/^\s*(\d{1,2})\s*x\s*(.+)$/i);
     if (mOpt && !hasMoney) {
       const optName = cleanName(mOpt[2] || "");
@@ -400,13 +435,11 @@ function parseItemsFromText(text: string) {
       continue;
     }
 
-    // ชื่ออย่างเดียว รอไปรวมกับบรรทัดถัดไป
     if (hasLetters && !hasMoney) {
       carryName = cleanName(carryName ? `${carryName} ${line0}` : line0);
       continue;
     }
 
-    // name + qty + unit + lineTotal
     const mCols = line0.match(
       /^(.*?)(?:\s{1,}|\t+)(\d{1,3})\s+(-?\d{1,3}(?:,\d{3})*(?:\.\d{1,2})?)\s+(-?\d{1,3}(?:,\d{3})*(?:\.\d{1,2})?)\s*$/,
     );
@@ -427,7 +460,6 @@ function parseItemsFromText(text: string) {
       continue;
     }
 
-    // name + qty + unitPrice
     const mQtyUnit = line0.match(
       /^(.*?)(?:\s{1,}|\t+)(\d{1,3})\s+(-?\d{1,3}(?:,\d{3})*(?:\.\d{1,2})?)\s*$/,
     );
@@ -445,7 +477,6 @@ function parseItemsFromText(text: string) {
       continue;
     }
 
-    // name ... price
     const m = line0.match(
       /^(.*?)(?:\s{1,}|\s*[-:]\s*)(-?\d{1,3}(?:,\d{3})*(?:\.\d{1,2})?)\s*(?:บาท|฿|baht)?\s*$/i,
     );
@@ -503,7 +534,7 @@ function findTotalFromText(text: string) {
 function normalizeStructuredItems(itemsUnknown: unknown): OCRNormalizedItem[] {
   if (!Array.isArray(itemsUnknown)) return [];
 
-  const out = itemsUnknown
+  return itemsUnknown
     .map((it: unknown) => {
       const obj = isRecord(it) ? it : {};
 
@@ -552,8 +583,6 @@ function normalizeStructuredItems(itemsUnknown: unknown): OCRNormalizedItem[] {
       };
     })
     .filter((it): it is OCRNormalizedItem => it !== null);
-
-  return out;
 }
 
 function normalizeSimpleItems(
@@ -564,6 +593,7 @@ function normalizeSimpleItems(
       const name = cleanSpaces(it.name);
       const qty = Math.max(1, Math.floor(it.qty));
       const unitPrice = round2(toNumber(it.price, Number.NaN));
+
       if (
         !name ||
         isBadItemName(name) ||
@@ -587,79 +617,189 @@ function sumLineTotals(items: OCRNormalizedItem[]) {
   return round2(items.reduce((sum, item) => sum + item.line_total, 0));
 }
 
-/** ---------- Typhoon message types ---------- */
-type TyphoonTextPart = { type: "text"; text: string };
-type TyphoonImagePart = { type: "image_url"; image_url: { url: string } };
-type TyphoonUserContent = Array<TyphoonTextPart | TyphoonImagePart>;
-type TyphoonMessage =
-  | { role: "system"; content: string }
-  | { role: "user"; content: TyphoonUserContent };
+function dedupeItems(items: OCRNormalizedItem[]) {
+  const seen = new Set<string>();
+  const out: OCRNormalizedItem[] = [];
 
-type TyphoonResponse = {
-  choices?: Array<{ message?: { content?: string } }>;
-  error?: { message?: string };
-  message?: string;
-};
+  for (const item of items) {
+    const key = `${compactForCompare(item.name)}|${item.qty}|${item.unit_price}|${item.line_total}`;
+    if (!key || seen.has(key)) continue;
+    seen.add(key);
+    out.push(item);
+  }
+
+  return out;
+}
 
 async function callTyphoonChat({
   baseUrl,
   apiKey,
   model,
   messages,
+  timeoutMs = 60_000,
+  maxTokens = 1800,
 }: {
   baseUrl: string;
   apiKey: string;
   model: string;
   messages: TyphoonMessage[];
+  timeoutMs?: number;
+  maxTokens?: number;
 }) {
-  const payload = { model, messages, temperature: 0, max_tokens: 1800 };
+  const payload = {
+    model,
+    messages,
+    temperature: 0,
+    max_tokens: maxTokens,
+  };
 
-  const r = await fetch(`${baseUrl}/chat/completions`, {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${apiKey}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify(payload),
-  });
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
 
-  const json: TyphoonResponse | null = await r.json().catch(() => null);
+  try {
+    const r = await fetch(`${baseUrl}/chat/completions`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+        "Content-Type": "application/json",
+      },
+      signal: controller.signal,
+      body: JSON.stringify(payload),
+      cache: "no-store",
+    });
 
-  if (!r.ok) {
+    const raw = await r.text();
+    let json: TyphoonResponse | null = null;
+
+    try {
+      json = JSON.parse(raw) as TyphoonResponse;
+    } catch {
+      json = null;
+    }
+
+    if (!r.ok) {
+      console.error("[OCR] OpenTyphoon failed", {
+        status: r.status,
+        model,
+        raw: raw.slice(0, 2000),
+      });
+
+      return {
+        ok: false as const,
+        status: r.status,
+        error:
+          json?.error?.message ||
+          json?.message ||
+          raw ||
+          `OpenTyphoon error (${r.status})`,
+        detail: json ?? raw,
+        content: "",
+      };
+    }
+
+    const content = json?.choices?.[0]?.message?.content ?? raw;
+
+    return {
+      ok: true as const,
+      status: 200,
+      error: null,
+      detail: json ?? raw,
+      content,
+    };
+  } catch (err: unknown) {
+    const isTimeout = err instanceof Error && err.name === "AbortError";
+
     return {
       ok: false as const,
-      status: r.status,
-      error:
-        json?.error?.message ||
-        json?.message ||
-        `OpenTyphoon error (${r.status})`,
-      detail: json,
+      status: isTimeout ? 408 : 500,
+      error: isTimeout
+        ? `OCR request timeout (${timeoutMs}ms)`
+        : `Network error: ${err instanceof Error ? err.message : "Unknown"}`,
+      detail: null,
       content: "",
     };
+  } finally {
+    clearTimeout(timeoutId);
   }
-
-  const content = json?.choices?.[0]?.message?.content ?? "";
-  return { ok: true as const, status: 200, error: null, detail: json, content };
 }
 
-async function parseItemsFromRawTextWithLLM({
+async function extractRawTextFromImage({
   baseUrl,
   apiKey,
-  model,
-  raw_text,
+  ocrModel,
+  dataUrl,
 }: {
   baseUrl: string;
   apiKey: string;
-  model: string;
-  raw_text: string;
+  ocrModel: string;
+  dataUrl: string;
+}) {
+  const system = `
+Return ONLY plain text.
+Extract ALL visible text from the receipt in reading order.
+Preserve line breaks as much as possible.
+Do not explain. Do not summarize. Do not wrap in markdown.
+`.trim();
+
+  const user = `อ่านข้อความทั้งหมดจากภาพใบเสร็จนี้ออกมาให้ครบทุกบรรทัด`;
+
+  const r = await callTyphoonChat({
+    baseUrl,
+    apiKey,
+    model: ocrModel,
+    timeoutMs: OCR_TIMEOUT_MS,
+    maxTokens: 2200,
+    messages: [
+      { role: "system", content: system },
+      {
+        role: "user",
+        content: [
+          { type: "text", text: user },
+          { type: "image_url", image_url: { url: dataUrl } },
+        ],
+      },
+    ],
+  });
+
+  if (!r.ok) return r;
+
+  const rawText = normalizeRawTextForParsing(
+    htmlToText((r.content || "").trim()),
+  );
+
+  return {
+    ok: true as const,
+    status: 200,
+    error: null,
+    detail: r.detail,
+    content: rawText,
+  };
+}
+
+async function parseBillFromRawTextWithLLM({
+  baseUrl,
+  apiKey,
+  textModel,
+  rawText,
+}: {
+  baseUrl: string;
+  apiKey: string;
+  textModel: string;
+  rawText: string;
 }): Promise<{
+  title: string | null;
   items: OCRNormalizedItem[];
   total: number | null;
 }> {
   const system = `
-Return ONLY valid JSON (no markdown).
+You are a receipt-to-JSON parser for Thai food bills.
+
+Return ONLY valid JSON.
+No markdown. No code fence. No explanation.
+
 Schema:
 {
+  "title": string | null,
   "items": [
     {
       "name": string,
@@ -668,43 +808,52 @@ Schema:
       "line_total": number
     }
   ],
-  "total": number|null
+  "total": number | null
 }
+
 Rules:
-- Input is raw_text from OCR of a Thai receipt.
-- Extract only real purchased item rows.
-- Exclude headers, VAT, tax, service charge, subtotal, total, payment, cashier, date, time, receipt metadata.
+- Extract only actual purchased food/drink item rows.
+- Exclude headers, receipt metadata, queue, cashier, tax ID, VAT, service charge, subtotal, discounts, payment lines, promptpay, QR, cash, change.
+- title = short merchant/store/restaurant name only.
 - qty must be integer >= 1.
-- unit_price must be price per item.
-- If only line total is visible, infer unit_price = line_total / qty.
-- line_total should be qty * unit_price when possible.
-- Return JSON numbers only, no commas.
+- unit_price must be price per unit.
+- If only line total is available, infer unit_price = line_total / qty.
+- line_total should equal qty * unit_price when possible.
+- total = final amount to pay.
+- Return numbers only, no commas, no currency symbols.
 `.trim();
 
   const user = `
 RAW_TEXT:
-${raw_text}
+${rawText}
 `.trim();
 
   const r = await callTyphoonChat({
     baseUrl,
     apiKey,
-    model,
+    model: textModel,
+    timeoutMs: TEXT_PARSE_TIMEOUT_MS,
+    maxTokens: 1800,
     messages: [
       { role: "system", content: system },
       { role: "user", content: [{ type: "text", text: user }] },
     ],
   });
 
-  if (!r.ok) return { items: [], total: null };
+  if (!r.ok) {
+    return { title: null, items: [], total: null };
+  }
 
   const obj = extractJsonObject(r.content);
-  if (!isRecord(obj)) return { items: [], total: null };
+  if (!isRecord(obj)) {
+    return { title: null, items: [], total: null };
+  }
 
-  const items = normalizeStructuredItems(obj.items);
-  const total = positiveNumberOrNull(obj.total);
-
-  return { items, total };
+  return {
+    title: typeof obj.title === "string" ? cleanSpaces(obj.title) : null,
+    items: normalizeStructuredItems(obj.items),
+    total: positiveNumberOrNull(obj.total),
+  };
 }
 
 export async function POST(req: Request) {
@@ -739,180 +888,144 @@ export async function POST(req: Request) {
       process.env.TYPHOON_BASE_URL ||
       "https://api.opentyphoon.ai/v1";
 
-    const model = process.env.TYPHOON_OCR_MODEL || "typhoon-ocr";
+    const ocrModel = process.env.TYPHOON_OCR_MODEL || "typhoon-ocr";
+    const textModel =
+      process.env.TYPHOON_TEXT_MODEL || "typhoon-v2.1-12b-instruct";
 
-    const mime = file.type || "image/jpeg";
-    const buf = Buffer.from(await file.arrayBuffer());
-    const b64 = buf.toString("base64");
-    const dataUrl = `data:${mime};base64,${b64}`;
+    const mime = (file.type || "").toLowerCase();
 
-    const systemParse = `
-You are an OCR receipt parser.
-
-Return ONLY valid JSON (no markdown, no code fences, no HTML).
-Schema:
-{
-  "title": string|null,
-  "items": [
-    {
-      "name": string,
-      "qty": number,
-      "unit_price": number,
-      "line_total": number
-    }
-  ],
-  "total": number|null,
-  "raw_text": string|null
-}
-
-Rules:
-- title must be the SHORT merchant/store name only.
-- Do NOT put slogans, branch text, tax id, receipt no, address, date, time, box number, queue number, or other metadata in title.
-- raw_text MUST be plain text only with line breaks.
-- items must contain only real purchased item rows.
-- qty must be integer >= 1.
-- unit_price must be price per item.
-- If only line_total is visible, infer unit_price when possible.
-- line_total should be the row total.
-- Exclude TAX, VAT, service, subtotal, total, payment, cashier, date/time, receipt metadata from items.
-- If an add-on/modifier clearly belongs to the previous item and has no standalone price, append it to the previous item name in parentheses.
-- Return JSON only.
-`.trim();
-
-    const userParse = `
-อ่านข้อความทั้งหมดจากภาพนี้ออกมาให้ครบ (ใส่ใน raw_text)
-และแยกข้อมูลเป็น:
-- title = ชื่อร้านสั้น ๆ เท่านั้น
-- items = รายการสินค้า / qty / unit_price / line_total
-- total = ยอดรวมสุทธิ
-
-ส่งออกเป็น JSON ตาม schema เท่านั้น
-`.trim();
-
-    const parseResp = await callTyphoonChat({
-      baseUrl,
-      apiKey,
-      model,
-      messages: [
-        { role: "system", content: systemParse },
-        {
-          role: "user",
-          content: [
-            { type: "text", text: userParse },
-            { type: "image_url", image_url: { url: dataUrl } },
-          ],
-        },
-      ],
-    });
-
-    if (!parseResp.ok) {
+    if (!ALLOWED_MIME_TYPES.has(mime)) {
       return NextResponse.json(
-        { ok: false, error: parseResp.error, detail: parseResp.detail },
-        { status: parseResp.status },
+        {
+          ok: false,
+          error: "รองรับเฉพาะไฟล์ JPG, JPEG, PNG และ PDF เท่านั้น",
+          detail: { mime: mime || "unknown" },
+        },
+        { status: 400 },
       );
     }
 
-    const parsedUnknown = extractJsonObject(parseResp.content);
-    const parsed = isRecord(parsedUnknown) ? parsedUnknown : {};
+    const buf = Buffer.from(await file.arrayBuffer());
 
-    let raw_text =
-      typeof parsed.raw_text === "string" && parsed.raw_text.trim()
-        ? htmlToText(parsed.raw_text.trim())
-        : "";
-
-    raw_text = normalizeRawTextForParsing(raw_text);
-
-    // fallback: OCR plain text only
-    if (!raw_text) {
-      const ocrOnly = await callTyphoonChat({
-        baseUrl,
-        apiKey,
-        model,
-        messages: [
-          {
-            role: "system",
-            content:
-              "Return ONLY plain text. Include ALL visible text from the image in reading order. Preserve line breaks.",
-          },
-          {
-            role: "user",
-            content: [
-              {
-                type: "text",
-                text: "ดึงข้อความทั้งหมดจากภาพนี้ออกมาให้ครบทุกบรรทัด",
-              },
-              { type: "image_url", image_url: { url: dataUrl } },
-            ],
-          },
-        ],
-      });
-
-      if (ocrOnly.ok) {
-        raw_text = htmlToText((ocrOnly.content || "").trim());
-        raw_text = normalizeRawTextForParsing(raw_text);
-      }
+    if (!buf.length) {
+      return NextResponse.json(
+        { ok: false, error: "Empty file" },
+        { status: 400 },
+      );
     }
 
-    const modelTotal = positiveNumberOrNull(parsed.total);
-    const textTotal = raw_text ? findTotalFromText(raw_text) : null;
-    const expectedTotal = modelTotal ?? textTotal;
+    if (buf.length > MAX_FILE_SIZE_BYTES) {
+      return NextResponse.json(
+        {
+          ok: false,
+          error: "ไฟล์มีขนาดใหญ่เกินกำหนด",
+          detail: {
+            maxBytes: MAX_FILE_SIZE_BYTES,
+            receivedBytes: buf.length,
+          },
+        },
+        { status: 413 },
+      );
+    }
 
-    const modelItems = normalizeStructuredItems(parsed.items);
-    const regexItems = normalizeSimpleItems(
-      raw_text ? parseItemsFromText(raw_text) : [],
+    const dataUrl = `data:${mime};base64,${buf.toString("base64")}`;
+
+    console.log("[OCR] start", {
+      mime,
+      size: buf.length,
+      ocrModel,
+      textModel,
+    });
+
+    // 1) OCR เอา raw_text ก่อน
+    const ocrResp = await extractRawTextFromImage({
+      baseUrl,
+      apiKey,
+      ocrModel,
+      dataUrl,
+    });
+
+    if (!ocrResp.ok) {
+      return NextResponse.json(
+        { ok: false, error: ocrResp.error, detail: ocrResp.detail },
+        { status: ocrResp.status },
+      );
+    }
+
+    const rawText = normalizeRawTextForParsing(
+      htmlToText((ocrResp.content || "").trim()),
     );
 
-    let llmItems: OCRNormalizedItem[] = [];
-    let llmTextTotal: number | null = null;
-
-    if (raw_text) {
-      const llm = await parseItemsFromRawTextWithLLM({
-        baseUrl,
-        apiKey,
-        model,
-        raw_text,
-      });
-      llmItems = llm.items;
-      llmTextTotal = llm.total;
+    if (!rawText) {
+      return NextResponse.json(
+        { ok: false, error: "OCR ไม่สามารถอ่านข้อความจากไฟล์นี้ได้" },
+        { status: 422 },
+      );
     }
 
-    const modelSum = modelItems.length > 0 ? sumLineTotals(modelItems) : null;
-    const modelLooksReasonable =
-      modelItems.length > 0 &&
-      !modelItems.some((item) => isBadItemName(item.name)) &&
+    // 2) parse ด้วย regex/heuristic ในเครื่องก่อน
+    const regexItems = normalizeSimpleItems(parseItemsFromText(rawText));
+    const regexTotal = findTotalFromText(rawText);
+    const regexTitle = sanitizeTitle(null, rawText);
+
+    // 3) parse ด้วย text model เพิ่มความแม่นยำ
+    const llmParsed = await parseBillFromRawTextWithLLM({
+      baseUrl,
+      apiKey,
+      textModel,
+      rawText,
+    });
+
+    const llmItems = dedupeItems(llmParsed.items);
+    const regexItemsDeduped = dedupeItems(regexItems);
+
+    const llmSum = llmItems.length > 0 ? sumLineTotals(llmItems) : null;
+    const regexSum =
+      regexItemsDeduped.length > 0 ? sumLineTotals(regexItemsDeduped) : null;
+
+    const expectedTotal = llmParsed.total ?? regexTotal ?? regexSum;
+
+    const llmLooksReasonable =
+      llmItems.length > 0 &&
+      !llmItems.some((item) => isBadItemName(item.name)) &&
       (expectedTotal == null ||
-        modelSum == null ||
-        Math.abs(modelSum - expectedTotal) <= Math.max(5, expectedTotal * 0.2));
+        llmSum == null ||
+        Math.abs(llmSum - expectedTotal) <= Math.max(5, expectedTotal * 0.2));
 
-    let items: OCRNormalizedItem[] = [];
+    const items = llmLooksReasonable ? llmItems : regexItemsDeduped;
 
-    if (modelLooksReasonable) {
-      items = modelItems;
-    } else if (llmItems.length > 0) {
-      items = llmItems;
-    } else {
-      items = regexItems;
-    }
     const computedTotal = items.length > 0 ? sumLineTotals(items) : null;
     const totalSource =
-      modelTotal ?? textTotal ?? llmTextTotal ?? computedTotal;
+      llmParsed.total ?? regexTotal ?? regexSum ?? computedTotal;
     const total =
       totalSource != null && Number.isFinite(totalSource) && totalSource > 0
         ? round2(totalSource)
         : null;
 
-    const title = sanitizeTitle(parsed.title, raw_text);
+    const title = sanitizeTitle(llmParsed.title ?? regexTitle, rawText);
 
     const response: OCRParsedPayload = {
       title,
       items,
       total,
-      raw_text: raw_text || null,
+      raw_text: rawText || null,
     };
+
+    console.log("[OCR] success", {
+      title: response.title,
+      items: response.items.length,
+      total: response.total,
+    });
 
     return NextResponse.json({
       ok: true,
       parsed: response,
+      raw: {
+        mime,
+        size: buf.length,
+        ocrModel,
+        textModel,
+      },
     });
   } catch (e: unknown) {
     const msg =
@@ -922,6 +1035,8 @@ Rules:
       typeof (e as { message: unknown }).message === "string"
         ? (e as { message: string }).message
         : "Server error";
+
+    console.error("[OCR] unhandled error", e);
 
     return NextResponse.json({ ok: false, error: msg }, { status: 500 });
   }

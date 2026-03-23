@@ -12,7 +12,7 @@ type NotificationType =
   | 'DAILY_UNPAID_SUMMARY'
   | 'GROUP_MEMBER_CHANGED'
   | 'GROUP_UPDATED'
-  | 'GROUP_NEW_BILL';
+  | 'FRIEND_REQUEST';
 
 type NotificationItem = {
   _id: string;
@@ -22,6 +22,8 @@ type NotificationItem = {
   href?: string;
   isRead: boolean;
   createdAt: string;
+  fromUserId?: string;
+  friendRequestStatus?: 'pending' | 'accepted' | 'rejected';
   meta?: { overdueDays?: number; unpaidCount?: number; totalOwed?: number };
 };
 
@@ -56,6 +58,7 @@ export default function NotificationBell() {
   const [items, setItems] = useState<NotificationItem[]>([]);
   const [unreadCount, setUnreadCount] = useState(0);
   const [loading, setLoading] = useState(false);
+  const [processingId, setProcessingId] = useState<string | null>(null);
 
   const boxRef = useRef<HTMLDivElement | null>(null);
 
@@ -126,6 +129,50 @@ export default function NotificationBell() {
       body: JSON.stringify({ ids: [id] }),
     });
     await fetchList(tab);
+  };
+
+  // ✅ ยอมรับคำขอเพื่อน
+  const handleAcceptFriendRequest = async (notificationId: string, fromUserId?: string) => {
+    if (!fromUserId) return;
+    try {
+      setProcessingId(notificationId);
+      const res = await fetch('/api/friends/accept', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ fromUserId }),
+      });
+      if (res.ok) {
+        await fetchList(tab);
+        alert('ยอมรับคำขอเพื่อนสำเร็จ');
+      }
+    } catch (error) {
+      console.error('Error accepting friend request:', error);
+      alert('ไม่สามารถยอมรับคำขอได้');
+    } finally {
+      setProcessingId(null);
+    }
+  };
+
+  // ✅ ปฏิเสธคำขอเพื่อน
+  const handleRejectFriendRequest = async (notificationId: string, fromUserId?: string) => {
+    if (!fromUserId) return;
+    try {
+      setProcessingId(notificationId);
+      const res = await fetch('/api/friends/reject', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ fromUserId }),
+      });
+      if (res.ok) {
+        await fetchList(tab);
+        alert('ปฏิเสธคำขอสำเร็จ');
+      }
+    } catch (error) {
+      console.error('Error rejecting friend request:', error);
+      alert('ไม่สามารถปฏิเสธคำขอได้');
+    } finally {
+      setProcessingId(null);
+    }
   };
 
   const headerTitle = useMemo(() => (tab === 'unread' ? 'Unread' : 'All'), [tab]);
@@ -212,6 +259,7 @@ export default function NotificationBell() {
             ) : (
               <div className="divide-y divide-black/5">
                 {items.map((n) => (
+                  
                   <div key={n._id} className="p-4 hover:bg-gray-50">
                     <div className="flex items-start gap-3">
                       <span
@@ -236,7 +284,36 @@ export default function NotificationBell() {
                         </div>
 
                         <div className="mt-3 flex items-center gap-2">
-                          {n.href ? (
+                          {n.type === 'FRIEND_REQUEST' ? (
+                            n.friendRequestStatus === 'pending' ? (
+                              // แสดงปุ่มยอมรับ/ปฏิเสธสำหรับคำขอเพื่อน
+                              <>
+                                <button
+                                  onClick={() => handleAcceptFriendRequest(n._id, n.fromUserId)}
+                                  disabled={processingId === n._id}
+                                  className="text-sm font-semibold text-green-600 hover:text-green-700 disabled:opacity-50"
+                                >
+                                  ยอมรับ
+                                </button>
+                                <button
+                                  onClick={() => handleRejectFriendRequest(n._id, n.fromUserId)}
+                                  disabled={processingId === n._id}
+                                  className="text-sm font-semibold text-red-600 hover:text-red-700 disabled:opacity-50"
+                                >
+                                  ปฏิเสธ
+                                </button>
+                              </>
+                            ) : (
+                              <span
+                                className={[
+                                  'text-sm font-semibold',
+                                  n.friendRequestStatus === 'accepted' ? 'text-green-600' : 'text-gray-500',
+                                ].join(' ')}
+                              >
+                                {n.friendRequestStatus === 'accepted' ? 'เป็นเพื่อนกันแล้ว' : 'คุณปฏิเสธคำขอแล้ว'}
+                              </span>
+                            )
+                          ) : n.href ? (
                             <Link
                               href={n.href}
                               className="text-sm font-semibold text-[#fb8c00] hover:text-[#e65100]"

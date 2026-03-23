@@ -1,0 +1,101 @@
+import mongoose, {
+  Schema,
+  models,
+  type InferSchemaType,
+  type Model,
+} from "mongoose";
+
+const slipInfoSchema = new Schema(
+  {
+    imageUrl: { type: String, default: "" },
+    publicId: { type: String },
+    provider: { type: String, default: "" },
+    reference: { type: String, default: "" },
+    checkedAt: { type: Date },
+    verified: { type: Boolean, default: false },
+  },
+  { _id: false },
+);
+
+const participantSchema = new Schema(
+  {
+    kind: {
+      type: String,
+      enum: ["user", "guest"],
+      default: "user",
+      index: true,
+    },
+
+    userId: { type: Schema.Types.ObjectId, ref: "User" },
+    guestId: { type: Schema.Types.ObjectId, ref: "Guest" },
+
+    name: { type: String, required: true },
+    amount: { type: Number, required: true },
+
+    paymentStatus: {
+      type: String,
+      enum: ["unpaid", "paid"],
+      default: "unpaid",
+      index: true,
+    },
+
+    slipInfo: { type: slipInfoSchema, default: undefined },
+    paidAt: { type: Date },
+  },
+  { _id: false },
+);
+
+const itemSchema = new Schema(
+  {
+    items: { type: String, required: true },
+    price: { type: Number, required: true },
+  },
+  { _id: false },
+);
+
+const billSchema = new Schema(
+  {
+    title: { type: String, required: true },
+    items: { type: [itemSchema], required: true },
+    totalPrice: { type: Number, required: true },
+
+    splitType: {
+      type: String,
+      enum: ["equal", "percentage", "personal"],
+      required: true,
+    },
+
+    participants: { type: [participantSchema], default: [] },
+    description: { type: String, default: "" },
+
+    createdBy: { type: Schema.Types.ObjectId, ref: "User" },
+    createdAt: { type: Date, default: Date.now },
+
+    stage: {
+      type: String,
+      enum: ["draft", "active"],
+      default: "active",
+      index: true,
+    },
+    publishedAt: { type: Date },
+
+    billStatus: {
+      type: String,
+      enum: ["unpaid", "pending", "paid"],
+      default: "unpaid",
+      index: true,
+    },
+  },
+  { timestamps: false },
+);
+
+billSchema.index({ "participants.userId": 1 });
+billSchema.index({ "participants.guestId": 1 });
+
+export type BillSchemaType = InferSchemaType<typeof billSchema>;
+type BillModelType = Model<BillSchemaType>;
+
+const Bill =
+  (models.Bill as BillModelType) ||
+  mongoose.model<BillSchemaType>("Bill", billSchema);
+export default Bill;

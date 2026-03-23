@@ -5,6 +5,7 @@ import { connectMongoDB } from '@/lib/mongodb';
 import Bill from '@/models/bill';
 import Notification from '@/models/notification';
 import NotificationSettings from '@/models/notificationSettings';
+import { pushToUserLine } from '@/lib/lineNotify';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -35,10 +36,21 @@ const hourTH = (d: Date) =>
 const daysBetween = (from: Date, to: Date) =>
   Math.max(0, Math.floor((to.getTime() - from.getTime()) / (1000 * 60 * 60 * 24)));
 
+const formatTHB = (value: number) =>
+  new Intl.NumberFormat('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(value);
+
+function extractBearerToken(req: Request): string {
+  const auth = req.headers.get('authorization') ?? '';
+  if (!auth.toLowerCase().startsWith('bearer ')) return '';
+  return auth.slice(7).trim();
+}
+
 export async function GET(req: Request) {
   // กันยิงมั่วด้วย secret (ถ้าอยากใช้)
   const url = new URL(req.url);
-  const secret = url.searchParams.get('secret') ?? '';
+  const secretFromQuery = url.searchParams.get('secret') ?? '';
+  const secretFromHeader = extractBearerToken(req);
+  const secret = secretFromQuery || secretFromHeader;
   const expected = process.env.CRON_SECRET ?? '';
   if (expected && secret !== expected) {
     return NextResponse.json({ ok: false, message: 'Forbidden' } satisfies Res, { status: 403 });
@@ -58,13 +70,29 @@ export async function GET(req: Request) {
     .lean();
 
   let processed = 0;
+  let scannedUsers = 0;
+  let skippedBeforeHour = 0;
+  let skippedAlreadySentToday = 0;
+  let skippedNoUnpaid = 0;
+  let skippedAlreadyHasNotification = 0;
+  let lineDelivered = 0;
+  let lineSkippedNotLinked = 0;
+  let linePushFailed = 0;
 
   for (const s of settingsList) {
+    scannedUsers += 1;
+
     const hour = typeof s.dailySummaryHour === 'number' ? s.dailySummaryHour : 9;
-    if (h < hour) continue;
+    if (h < hour) {
+      skippedBeforeHour += 1;
+      continue;
+    }
 
     const lastKey = s.lastDailySummaryAt ? dateKeyTH(new Date(s.lastDailySummaryAt)) : '';
-    if (lastKey === today) continue;
+    if (lastKey === today) {
+      skippedAlreadySentToday += 1;
+      continue;
+    }
 
     const userId = s.userId as mongoose.Types.ObjectId;
 
@@ -95,7 +123,10 @@ export async function GET(req: Request) {
     // ถ้าไม่ค้าง ไม่ต้องส่ง แต่ mark ว่าเช็ควันนี้แล้ว กันยิงซ้ำ
     await NotificationSettings.updateOne({ userId }, { $set: { lastDailySummaryAt: now } });
 
-    if (unpaidCount === 0) continue;
+    if (unpaidCount === 0) {
+      skippedNoUnpaid += 1;
+      continue;
+    }
 
     // กันซ้ำ: วันนี้เคยส่งแล้วไหม
     const already = await Notification.findOne({
@@ -105,7 +136,10 @@ export async function GET(req: Request) {
     })
       .select('_id')
       .lean();
-    if (already) continue;
+    if (already) {
+      skippedAlreadyHasNotification += 1;
+      continue;
+    }
 
     await Notification.create({
       userId,
@@ -118,8 +152,38 @@ export async function GET(req: Request) {
       isRead: false,
     });
 
+    const lineResult = await pushToUserLine(
+      String(userId),
+      [
+        'สรุปยอดค้างรายวัน',
+        `คุณค้างจ่าย ${unpaidCount} บิล`,
+        `ยอดรวม ${formatTHB(totalOwed)} บาท`,
+        `ค้างสูงสุด ${maxOverdueDays} วัน`,
+      ].join('\n')
+    );
+
+    if (lineResult.ok) {
+      lineDelivered += 1;
+    } else if (lineResult.reason === 'not_linked') {
+      lineSkippedNotLinked += 1;
+    } else {
+      linePushFailed += 1;
+    }
+
     processed += 1;
   }
 
-  return NextResponse.json({ ok: true, message: 'done', processed } satisfies Res);
+  return NextResponse.json({
+    ok: true,
+    message: 'done',
+    processed,
+    scannedUsers,
+    skippedBeforeHour,
+    skippedAlreadySentToday,
+    skippedNoUnpaid,
+    skippedAlreadyHasNotification,
+    lineDelivered,
+    lineSkippedNotLinked,
+    linePushFailed,
+  });
 }

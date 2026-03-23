@@ -5,11 +5,12 @@ import Bill from '@/models/bill';
 import User from '@/models/user';
 import Notification from '@/models/notification';
 import NotificationSettings from '@/models/notificationSettings';
-import { pushToUserLine } from '@/lib/lineNotify';
+import { pushToUserLine, pushToUserLineWithImage } from '@/lib/lineNotify';
 
 type ObjectIdLike = mongoose.Types.ObjectId | string;
 
 type NotificationType =
+  | 'BILL_CREATED_OWNER'
   | 'BILL_ADDED_YOU'
   | 'BILL_UPDATED'
   | 'BILL_STATUS_CHANGED'
@@ -20,10 +21,12 @@ type BillLean = {
   _id: mongoose.Types.ObjectId;
   title: string;
   billStatus: 'unpaid' | 'pending' | 'paid';
+  receiptImageUrl?: string;
   createdAt: Date;
   createdBy?: mongoose.Types.ObjectId;
   participants: Array<{
     userId?: mongoose.Types.ObjectId;
+    guestId?: mongoose.Types.ObjectId;
     name: string;
     amount: number;
     paymentStatus: 'unpaid' | 'paid';
@@ -32,9 +35,21 @@ type BillLean = {
 };
 
 const APP_URL = process.env.NEXTAUTH_URL || 'https://smart-bill-sharing.vercel.app';
-const billUrl = (billId: mongoose.Types.ObjectId) => `${APP_URL}/bills/${billId.toString()}`;
+
+function historyBillPath(billId: mongoose.Types.ObjectId) {
+  return `/history?billId=${billId.toString()}`;
+}
+
+function historyBillUrl(billId: mongoose.Types.ObjectId) {
+  return `${APP_URL}${historyBillPath(billId)}`;
+}
+
+function loginToHistoryBillUrl(billId: mongoose.Types.ObjectId) {
+  return `${APP_URL}/login?callbackUrl=${encodeURIComponent(historyBillPath(billId))}`;
+}
 
 const DEFAULT_TYPES: NotificationType[] = [
+  'BILL_CREATED_OWNER',
   'BILL_ADDED_YOU',
   'BILL_UPDATED',
   'BILL_STATUS_CHANGED',
@@ -52,6 +67,10 @@ function formatTHB(n: number) {
 
 function findParticipant(bill: BillLean, userId: mongoose.Types.ObjectId) {
   return bill.participants.find((p) => p.userId && String(p.userId) === String(userId)) ?? null;
+}
+
+function findGuestParticipant(bill: BillLean, guestId: mongoose.Types.ObjectId) {
+  return bill.participants.find((p) => p.guestId && String(p.guestId) === String(guestId)) ?? null;
 }
 
 function billSummary(bill: BillLean) {
@@ -99,6 +118,7 @@ async function createOnce(args: {
   title: string;
   message: string;
   billId?: mongoose.Types.ObjectId;
+  href?: string;
   meta?: { unpaidCount?: number; totalOwed?: number; maxOverdueDays?: number };
   dedupe?: boolean;
 }): Promise<boolean> {
@@ -116,6 +136,7 @@ async function createOnce(args: {
     title: args.title,
     message: args.message,
     billId,
+    href: args.href ?? (billId ? historyBillPath(billId) : undefined),
     meta: args.meta,
     isRead: false,
   });
@@ -124,7 +145,7 @@ async function createOnce(args: {
 }
 
 async function loadBillLean(billId: mongoose.Types.ObjectId): Promise<BillLean | null> {
-  const b = await Bill.findById(billId).select('title billStatus participants createdAt createdBy').lean();
+  const b = await Bill.findById(billId).select('title billStatus receiptImageUrl participants createdAt createdBy').lean();
   return b as unknown as BillLean | null;
 }
 
@@ -145,6 +166,58 @@ function buildLineBillDetail(bill: BillLean, receiverId: mongoose.Types.ObjectId
   return { detail, myAmount, myPayStatus };
 }
 
+function buildLineOwnerDetail(bill: BillLean) {
+  const { total, people, paidCount } = billSummary(bill);
+
+  const detail =
+    `บิล: ${bill.title}\n` +
+    `ยอดรวม: ${formatTHB(total)} | คน: ${people} | จ่ายแล้ว: ${paidCount}/${people}\n` +
+    `สถานะบิล: ${billStatusTH(bill.billStatus)}`;
+
+  return { detail, total, people, paidCount };
+}
+
+/** ✅ 0) หัวบิลสร้างบิลสำเร็จ */
+export async function notifyBillCreatedOwner(params: { billId: ObjectIdLike; ownerUserId?: ObjectIdLike }) {
+  await connectMongoDB();
+  const billId = toId(params.billId);
+
+  const bill = await loadBillLean(billId);
+  if (!bill) return;
+
+  const ownerId = params.ownerUserId
+    ? toId(params.ownerUserId)
+    : bill.createdBy;
+  if (!ownerId) return;
+
+  if (!(await isEnabled(ownerId, 'BILL_CREATED_OWNER'))) return;
+
+  const created = await createOnce({
+    userId: ownerId,
+    type: 'BILL_CREATED_OWNER',
+    title: 'สร้างบิลสำเร็จ',
+    message: `คุณสร้างบิล "${bill.title}" สำเร็จแล้ว`,
+    billId,
+    dedupe: true,
+  });
+
+  if (!created) return;
+
+  const { detail } = buildLineOwnerDetail(bill);
+  const lineText =
+    `✅ สร้างบิลสำเร็จ\n` +
+    `บิล: ${bill.title}\n\n` +
+    `${detail}\n\n` +
+    `เปิดบิลนี้: ${historyBillUrl(billId)}\n` +
+    `ถ้ายังไม่ได้ล็อกอิน: ${loginToHistoryBillUrl(billId)}`;
+
+  const receiptImageUrl = (bill.receiptImageUrl ?? '').trim();
+  if (receiptImageUrl) {
+    await pushToUserLineWithImage(ownerId.toString(), lineText, receiptImageUrl);
+  } else {
+    await pushToUserLine(ownerId.toString(), lineText);
+  }
+}
 /** ✅ 1) ถูกเพิ่มเข้าบิลใหม่ */
 export async function notifyBillAddedYou(params: { billId: ObjectIdLike; actorUserId: ObjectIdLike }) {
   await connectMongoDB();
@@ -175,11 +248,14 @@ export async function notifyBillAddedYou(params: { billId: ObjectIdLike; actorUs
 
     if (created) {
       const { detail } = buildLineBillDetail(bill, uid);
+      const lineText = `🧾 คุณถูกเพิ่มเข้าบิลใหม่\nโดย: ${actorName}\n\n${detail}\n\nเปิดบิลนี้: ${historyBillUrl(billId)}\nถ้ายังไม่ได้ล็อกอิน: ${loginToHistoryBillUrl(billId)}`;
+      const receiptImageUrl = (bill.receiptImageUrl ?? '').trim();
 
-      await pushToUserLine(
-        uid.toString(),
-        `🧾 คุณถูกเพิ่มเข้าบิลใหม่\nโดย: ${actorName}\n\n${detail}\n\n(ดูในเว็บ: ${billUrl(billId)})`
-      );
+      if (receiptImageUrl) {
+        await pushToUserLineWithImage(uid.toString(), lineText, receiptImageUrl);
+      } else {
+        await pushToUserLine(uid.toString(), lineText);
+      }
       // ถ้าไม่อยากให้มีลิงก์เลย ให้ลบบรรทัด (ดูในเว็บ: ...)
     }
   }
@@ -218,7 +294,7 @@ export async function notifyBillUpdated(params: { billId: ObjectIdLike; actorUse
 
       await pushToUserLine(
         uid.toString(),
-        `✏️ บิลถูกแก้ไข\n${hint ? `รายละเอียด: ${hint}\n` : ''}\n${detail}\n\n(ดูในเว็บ: ${billUrl(billId)})`
+        `✏️ บิลถูกแก้ไข\n${hint ? `รายละเอียด: ${hint}\n` : ''}\n${detail}\n\nเปิดบิลนี้: ${historyBillUrl(billId)}`
       );
     }
   }
@@ -241,6 +317,10 @@ export async function notifyBillStatusChanged(params: {
 
   // ✅ แจ้ง target
   if (String(targetId) !== String(actorId) && (await isEnabled(targetId, 'BILL_STATUS_CHANGED'))) {
+    const targetParticipant = findParticipant(bill, targetId);
+    const targetName = targetParticipant?.name?.trim() || 'ผู้ใช้';
+    const slipImageUrl = (targetParticipant?.slipInfo?.imageUrl ?? '').trim();
+
     const msgWeb =
       params.action === 'paid'
         ? `สถานะของคุณในบิล "${bill.title}" ถูกอัปเดตเป็น "จ่ายแล้ว"`
@@ -257,11 +337,17 @@ export async function notifyBillStatusChanged(params: {
 
     if (created) {
       const { detail } = buildLineBillDetail(bill, targetId);
+      const lineText =
+        `🔔 สถานะของคุณถูกอัปเดต\n` +
+        `ผู้จ่าย: ${targetName}\n` +
+        `เหตุการณ์: ${params.action === 'paid' ? 'ยืนยันจ่าย' : 'อัปโหลดสลิป'}\n\n` +
+        `${detail}\n\nเปิดบิลนี้: ${historyBillUrl(billId)}`;
 
-      await pushToUserLine(
-        targetId.toString(),
-        `🔔 สถานะของคุณถูกอัปเดต\nเหตุการณ์: ${params.action === 'paid' ? 'ยืนยันจ่าย' : 'อัปโหลดสลิป'}\n\n${detail}\n\n(ดูในเว็บ: ${billUrl(billId)})`
-      );
+      if (slipImageUrl) {
+        await pushToUserLineWithImage(targetId.toString(), lineText, slipImageUrl);
+      } else {
+        await pushToUserLine(targetId.toString(), lineText);
+      }
     }
   }
 
@@ -269,6 +355,9 @@ export async function notifyBillStatusChanged(params: {
   if (bill.createdBy && String(bill.createdBy) !== String(actorId) && (await isEnabled(bill.createdBy, 'BILL_STATUS_CHANGED'))) {
     const actor = await User.findById(actorId).select('name').lean();
     const actorName = (actor as { name?: string } | null)?.name ?? 'Someone';
+    const targetParticipant = findParticipant(bill, targetId);
+    const targetName = targetParticipant?.name?.trim() || actorName;
+    const slipImageUrl = (targetParticipant?.slipInfo?.imageUrl ?? '').trim();
 
     const msgWeb =
       params.action === 'paid'
@@ -286,11 +375,69 @@ export async function notifyBillStatusChanged(params: {
 
     if (created) {
       const { detail } = buildLineBillDetail(bill, bill.createdBy);
+      const lineText =
+        `📌 อัปเดตสถานะในบิล\n` +
+        `ผู้จ่าย: ${targetName}\n` +
+        `ผู้ทำรายการ: ${actorName}\n` +
+        `เหตุการณ์: ${params.action === 'paid' ? 'ยืนยันจ่าย' : 'อัปโหลดสลิป'}\n\n` +
+        `${detail}\n\nเปิดบิลนี้: ${historyBillUrl(billId)}`;
 
-      await pushToUserLine(
-        bill.createdBy.toString(),
-        `📌 อัปเดตสถานะในบิล\nผู้ทำรายการ: ${actorName}\nเหตุการณ์: ${params.action === 'paid' ? 'ยืนยันจ่าย' : 'อัปโหลดสลิป'}\n\n${detail}\n\n(ดูในเว็บ: ${billUrl(billId)})`
-      );
+      if (slipImageUrl) {
+        await pushToUserLineWithImage(bill.createdBy.toString(), lineText, slipImageUrl);
+      } else {
+        await pushToUserLine(bill.createdBy.toString(), lineText);
+      }
+    }
+  }
+}
+
+export async function notifyGuestPaidToOwner(params: {
+  billId: ObjectIdLike;
+  guestId?: ObjectIdLike;
+  guestName?: string;
+  action: 'paid' | 'slip_uploaded';
+}) {
+  await connectMongoDB();
+  const billId = toId(params.billId);
+
+  const bill = await loadBillLean(billId);
+  if (!bill || !bill.createdBy) return;
+
+  const ownerId = bill.createdBy;
+  if (!(await isEnabled(ownerId, 'BILL_STATUS_CHANGED'))) return;
+
+  const guestName = (params.guestName ?? '').trim() || 'Guest';
+  const guestId = params.guestId ? toId(params.guestId) : null;
+  const guestParticipant = guestId ? findGuestParticipant(bill, guestId) : null;
+  const slipImageUrl = (guestParticipant?.slipInfo?.imageUrl ?? '').trim();
+
+  const msgWeb =
+    params.action === 'paid'
+      ? `${guestName} ยืนยันการจ่ายในบิล "${bill.title}"`
+      : `${guestName} อัปโหลดสลิปในบิล "${bill.title}"`;
+
+  const created = await createOnce({
+    userId: ownerId,
+    type: 'BILL_STATUS_CHANGED',
+    title: 'อัปเดตสถานะในบิล',
+    message: msgWeb,
+    billId,
+    dedupe: false,
+  });
+
+  if (created) {
+    const { detail } = buildLineOwnerDetail(bill);
+    const lineText =
+      `📌 อัปเดตสถานะในบิล\n` +
+      `ผู้จ่าย: ${guestName}\n` +
+      `ผู้ทำรายการ: ${guestName}\n` +
+      `เหตุการณ์: ${params.action === 'paid' ? 'ยืนยันจ่าย' : 'อัปโหลดสลิป'}\n\n` +
+      `${detail}\n\nเปิดบิลนี้: ${historyBillUrl(billId)}`;
+
+    if (slipImageUrl) {
+      await pushToUserLineWithImage(ownerId.toString(), lineText, slipImageUrl);
+    } else {
+      await pushToUserLine(ownerId.toString(), lineText);
     }
   }
 }
@@ -323,7 +470,7 @@ export async function notifyBillClosed(params: { billId: ObjectIdLike }) {
 
       await pushToUserLine(
         uid.toString(),
-        `✅ บิลปิดแล้ว (ทุกคนจ่ายครบ)\n\n${detail}\n\n(ดูในเว็บ: https://smart-bill-sharing.vercel.app)`
+        `✅ บิลปิดแล้ว (ทุกคนจ่ายครบ)\n\n${detail}\n\nเปิดบิลนี้: ${historyBillUrl(billId)}`
       );
     }
   }

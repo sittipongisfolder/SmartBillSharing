@@ -5,7 +5,7 @@ export interface INotificationSettings extends mongoose.Document {
   userId: mongoose.Types.ObjectId;
 
   enabledTypes: NotificationType[];     // เปิด/ปิดแต่ละประเภท
-  followGroupIds: mongoose.Types.ObjectId[]; // กลุ่มที่ “ติดตาม” เพื่อรับ GROUP_NEW_BILL
+  followGroupIds: mongoose.Types.ObjectId[];
 
   // สรุปค้างรายวัน
   dailySummaryEnabled: boolean;

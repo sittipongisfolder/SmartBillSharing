@@ -1,0 +1,8 @@
+{
+  "crons": [
+    {
+      "path": "/api/cron/daily-unpaid-summary",
+      "schedule": "0 * * * *"
+    }
+  ]
+}

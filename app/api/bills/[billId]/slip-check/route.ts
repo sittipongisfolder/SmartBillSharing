@@ -4,11 +4,18 @@ import type { Session } from "next-auth";
 import { authOptions } from "@/lib/authOptions";
 import { connectMongoDB } from "@/lib/mongodb";
 import Bill from "@/models/bill";
+import Guest from "@/models/guest";
+import GuestAccessLink from "@/models/guestAccessLink";
 import type { HydratedDocument } from "mongoose";
+import { createHash } from "crypto";
 import { cloudinary } from "@/lib/cloudinary";
 import { Readable } from "stream";
 import type { UploadApiResponse, UploadApiErrorResponse } from "cloudinary";
-import { notifyBillStatusChanged, notifyBillClosed } from "@/lib/notify";
+import {
+  notifyBillStatusChanged,
+  notifyGuestPaidToOwner,
+  notifyBillClosed,
+} from "@/lib/notify";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -39,7 +46,9 @@ type SlipInfoRes = {
 };
 
 type ParticipantDoc = {
-  userId: IdLike;
+  userId?: IdLike;
+  guestId?: IdLike;
+  kind?: "user" | "guest_placeholder" | "guest";
   name?: string;
   amount: number;
   paymentStatus: ParticipantStatus;
@@ -84,7 +93,8 @@ type SlipCheckOk = {
     amount?: number;
   };
   updatedParticipant: {
-    userId: string;
+    userId?: string;
+    guestId?: string;
     paymentStatus: ParticipantStatus;
     slipInfo?: SlipInfoRes;
     paidAt?: string | null;
@@ -93,6 +103,25 @@ type SlipCheckOk = {
 
 type SlipCheckErr = { ok: false; message: string };
 type SlipCheckResponse = SlipCheckOk | SlipCheckErr;
+
+type GuestAccessLinkLean = {
+  _id?: IdLike;
+  guestId: IdLike;
+  billId: IdLike;
+  tokenHash: string;
+  tokenLast4?: string;
+  isActive?: boolean;
+  expiresAt?: Date | null;
+  createdAt?: Date;
+  lastUsedAt?: Date | null;
+};
+
+type GuestLean = {
+  _id?: IdLike;
+  name?: string;
+  displayName?: string;
+  guestName?: string;
+};
 
 function bufferToStream(buffer: Buffer) {
   const readable = new Readable();
@@ -104,16 +133,15 @@ function bufferToStream(buffer: Buffer) {
 async function uploadSlipToCloudinary(args: {
   file: File;
   billId: string;
-  userId: string;
+  actorKey: string;
   transRef: string;
 }): Promise<{ imageUrl: string; publicId: string }> {
-  const { file, billId, userId, transRef } = args;
+  const { file, billId, actorKey, transRef } = args;
 
   const arrayBuffer = await file.arrayBuffer();
   const buffer = Buffer.from(arrayBuffer);
 
-  // ตั้งชื่อให้หา/จัดการง่าย
-  const publicId = `${billId}_${userId}_${transRef}`;
+  const publicId = `${billId}_${actorKey}_${transRef}`;
 
   const result = await new Promise<UploadApiResponse>((resolve, reject) => {
     const upload = cloudinary.uploader.upload_stream(
@@ -128,8 +156,9 @@ async function uploadSlipToCloudinary(args: {
         res: UploadApiResponse | undefined,
       ) => {
         if (error) return reject(error);
-        if (!res)
+        if (!res) {
           return reject(new Error("Cloudinary upload failed: empty response"));
+        }
         resolve(res);
       },
     );
@@ -159,6 +188,10 @@ function digitsOnly(s?: string): string {
 function isOwnerPopulated(v: unknown): v is OwnerPopulated {
   if (!isObject(v)) return false;
   return "_id" in v;
+}
+
+function hashGuestAccessToken(rawToken: string): string {
+  return createHash("sha256").update(rawToken.trim()).digest("hex");
 }
 
 /** mask match: 086xxx7894 / xxx-x-x3109-x */
@@ -225,18 +258,9 @@ function computeBillStatusHybrid(
   return "pending";
 }
 
-function hasUserId(user: unknown): user is { id: string } {
-  if (!isObject(user)) return false;
-  if (!("id" in user)) return false;
-  return (
-    typeof (user as { id?: unknown }).id === "string" &&
-    ((user as { id?: string }).id ?? "").length > 0
-  );
-}
-
 function getUserIdFromSession(session: Session | null): string | null {
-  if (!session?.user) return null;
-  return hasUserId(session.user) ? session.user.id : null;
+  const id = session?.user && "id" in session.user ? session.user.id : null;
+  return typeof id === "string" && id.length > 0 ? id : null;
 }
 
 // ---------- SlipOK normalize ----------
@@ -389,7 +413,7 @@ async function slipokCheckSlip(args: {
 }
 
 // ---------- ✅ กันสลิปซ้ำด้วย transRef ----------
-type DupHit = { billId: string; userId: string };
+type DupHit = { billId: string; userId?: string; guestId?: string };
 
 async function findDuplicateSlipReference(
   reference: string,
@@ -405,6 +429,7 @@ async function findDuplicateSlipReference(
     _id: IdLike;
     participants?: Array<{
       userId?: IdLike;
+      guestId?: IdLike;
       slipInfo?: { reference?: string };
     }>;
   };
@@ -415,8 +440,53 @@ async function findDuplicateSlipReference(
 
   return {
     billId: toIdString(d._id),
-    userId: hit?.userId ? toIdString(hit.userId) : "",
+    userId: hit?.userId ? toIdString(hit.userId) : undefined,
+    guestId: hit?.guestId ? toIdString(hit.guestId) : undefined,
   };
+}
+
+async function resolveGuestName(guestId: string): Promise<string> {
+  if (!guestId) return "";
+
+  const guest = (await Guest.findById(guestId)
+    .select("name displayName guestName")
+    .lean()) as GuestLean | null;
+
+  if (!guest) return "";
+  return (
+    guest.name?.trim() ||
+    guest.displayName?.trim() ||
+    guest.guestName?.trim() ||
+    ""
+  );
+}
+
+function findParticipantIndexForGuest(
+  participants: ParticipantDoc[],
+  guestId: string,
+  guestName: string,
+): number {
+  if (guestId) {
+    const indexByGuestId = participants.findIndex(
+      (participant) => toIdString(participant.guestId) === guestId,
+    );
+    if (indexByGuestId >= 0) return indexByGuestId;
+  }
+
+  const normalizedGuestName = guestName.trim().toLowerCase();
+  if (normalizedGuestName) {
+    const indexByName = participants.findIndex((participant) => {
+      const participantName = (participant.name ?? "").trim().toLowerCase();
+      const participantKind = participant.kind ?? "";
+      return (
+        participantName === normalizedGuestName &&
+        (participantKind === "guest" || participantKind === "guest_placeholder")
+      );
+    });
+    if (indexByName >= 0) return indexByName;
+  }
+
+  return -1;
 }
 
 // ✅ Next 15 params เป็น Promise
@@ -426,13 +496,6 @@ export async function POST(req: NextRequest, { params }: RouteCtx) {
   try {
     const session = await getServerSession(authOptions);
     const sessionUserId = getUserIdFromSession(session);
-
-    if (!sessionUserId) {
-      return NextResponse.json<SlipCheckResponse>(
-        { ok: false, message: "Unauthorized" },
-        { status: 401 },
-      );
-    }
 
     const { billId } = await params;
 
@@ -454,11 +517,18 @@ export async function POST(req: NextRequest, { params }: RouteCtx) {
         ? true
         : String(autoPaidRaw) === "true";
 
+    const guestAccessTokenValue = form.get("guestAccessToken");
+    const guestAccessToken =
+      typeof guestAccessTokenValue === "string" &&
+      guestAccessTokenValue.trim().length > 0
+        ? guestAccessTokenValue.trim()
+        : "";
+
     const userIdValue = form.get("userId");
-    const targetUserId =
+    const explicitUserId =
       typeof userIdValue === "string" && userIdValue.trim().length > 0
         ? userIdValue.trim()
-        : sessionUserId;
+        : null;
 
     await connectMongoDB();
 
@@ -487,30 +557,117 @@ export async function POST(req: NextRequest, { params }: RouteCtx) {
     const ownerPhone = digitsOnly(ownerObj?.promptPayPhone);
     const ownerBankAcc = digitsOnly(ownerObj?.bankAccountNumber);
 
-    const isOwner = String(ownerId) === String(sessionUserId);
-    const isSelf = String(targetUserId) === String(sessionUserId);
+    let idx = -1;
+    let targetUserId: string | null = null;
+    let targetGuestId: string | null = null;
+    let actorMode: "user" | "guest" = "user";
 
-    // ✅ สิทธิ์: จ่ายเองได้ / owner อัปเดตแทนคนอื่นได้
-    if (!isSelf && !isOwner) {
-      return NextResponse.json<SlipCheckResponse>(
-        { ok: false, message: "Forbidden" },
-        { status: 403 },
+    // ✅ ถ้ามี guestAccessToken ให้ใช้ guest flow ก่อนเสมอ
+    if (guestAccessToken) {
+      const tokenHash = hashGuestAccessToken(guestAccessToken);
+
+      const access = (await GuestAccessLink.findOne({
+        tokenHash,
+        isActive: true,
+      }).lean()) as GuestAccessLinkLean | null;
+
+      if (!access) {
+        return NextResponse.json<SlipCheckResponse>(
+          { ok: false, message: "Invalid guest access token" },
+          { status: 403 },
+        );
+      }
+
+      if (access.expiresAt && access.expiresAt.getTime() < Date.now()) {
+        return NextResponse.json<SlipCheckResponse>(
+          { ok: false, message: "Guest access token has expired" },
+          { status: 403 },
+        );
+      }
+
+      if (toIdString(access.billId) !== String(billId)) {
+        return NextResponse.json<SlipCheckResponse>(
+          {
+            ok: false,
+            message: "This guest access token does not belong to this bill",
+          },
+          { status: 403 },
+        );
+      }
+
+      const guestId = toIdString(access.guestId);
+      const guestName = await resolveGuestName(guestId);
+
+      idx = findParticipantIndexForGuest(
+        billDoc.participants,
+        guestId,
+        guestName,
       );
+      if (idx === -1) {
+        return NextResponse.json<SlipCheckResponse>(
+          { ok: false, message: "Guest participant not found in this bill" },
+          { status: 404 },
+        );
+      }
+
+      targetGuestId = guestId;
+      actorMode = "guest";
+
+      await GuestAccessLink.updateOne(
+        { _id: access._id },
+        { $set: { lastUsedAt: new Date() } },
+      );
+    } else {
+      if (!sessionUserId) {
+        return NextResponse.json<SlipCheckResponse>(
+          { ok: false, message: "Unauthorized" },
+          { status: 401 },
+        );
+      }
+
+      const targetFromForm = explicitUserId ?? sessionUserId;
+      const isOwner = String(ownerId) === String(sessionUserId);
+      const isSelf = String(targetFromForm) === String(sessionUserId);
+
+      if (!isSelf && !isOwner) {
+        return NextResponse.json<SlipCheckResponse>(
+          { ok: false, message: "Forbidden" },
+          { status: 403 },
+        );
+      }
+
+      idx = billDoc.participants.findIndex(
+        (p) => toIdString(p.userId) === String(targetFromForm),
+      );
+
+      if (idx === -1) {
+        return NextResponse.json<SlipCheckResponse>(
+          { ok: false, message: "Participant not found in this bill" },
+          { status: 404 },
+        );
+      }
+
+      targetUserId = targetFromForm;
+      actorMode = "user";
     }
 
-    const idx = billDoc.participants.findIndex(
-      (p) => toIdString(p.userId) === String(targetUserId),
-    );
-    if (idx === -1) {
+    const participant = billDoc.participants[idx];
+    if (!participant) {
       return NextResponse.json<SlipCheckResponse>(
         { ok: false, message: "Participant not found in this bill" },
         { status: 404 },
       );
     }
 
-    const expectedAmount = Number(billDoc.participants[idx]?.amount) || 0;
+    if (participant.paymentStatus === "paid") {
+      return NextResponse.json<SlipCheckResponse>(
+        { ok: false, message: "This participant has already paid" },
+        { status: 409 },
+      );
+    }
 
-    // ===== call SlipOK =====
+    const expectedAmount = Number(participant.amount) || 0;
+
     const slip = await slipokCheckSlip({
       file,
       // amount: expectedAmount > 0 ? expectedAmount : undefined,
@@ -535,12 +692,16 @@ export async function POST(req: NextRequest, { params }: RouteCtx) {
       );
     }
 
-    // ===== ✅ กันสลิปซ้ำ (เช็คก่อนอัปโหลด) =====
     const dup = await findDuplicateSlipReference(transRef);
     const sameBill = dup?.billId === String(billId);
-    const sameUser = dup?.userId === String(targetUserId);
+    const sameUser = targetUserId
+      ? dup?.userId === String(targetUserId)
+      : false;
+    const sameGuest = targetGuestId
+      ? dup?.guestId === String(targetGuestId)
+      : false;
 
-    if (dup && !(sameBill && sameUser)) {
+    if (dup && !(sameBill && (sameUser || sameGuest))) {
       return NextResponse.json<SlipCheckResponse>(
         {
           ok: false,
@@ -550,15 +711,18 @@ export async function POST(req: NextRequest, { params }: RouteCtx) {
       );
     }
 
-    // ===== upload slip image to Cloudinary =====
+    const actorKey =
+      actorMode === "guest"
+        ? `guest_${targetGuestId ?? "unknown"}`
+        : `user_${targetUserId ?? "unknown"}`;
+
     const { imageUrl, publicId } = await uploadSlipToCloudinary({
       file,
       billId,
-      userId: targetUserId,
+      actorKey,
       transRef,
     });
 
-    // ===== checks =====
     const qrValid = true;
 
     const receiverMatched =
@@ -581,7 +745,6 @@ export async function POST(req: NextRequest, { params }: RouteCtx) {
 
     const verified = qrValid && receiverMatched && amountMatched;
 
-    // ===== save slipInfo (✅ บันทึก URL จริง + publicId) =====
     const slipInfoDb: SlipInfoDb = {
       imageUrl,
       publicId,
@@ -593,20 +756,21 @@ export async function POST(req: NextRequest, { params }: RouteCtx) {
 
     const nextParticipantStatus: ParticipantStatus =
       verified && autoPaid ? "paid" : "unpaid";
-    const prevParticipantStatus = billDoc.participants[idx].paymentStatus;
+    const prevParticipantStatus = participant.paymentStatus;
     const prevBillStatus = billDoc.billStatus;
 
     billDoc.participants[idx].slipInfo = slipInfoDb;
     billDoc.participants[idx].paymentStatus = nextParticipantStatus;
 
-    if (nextParticipantStatus === "paid")
+    if (nextParticipantStatus === "paid") {
       billDoc.participants[idx].paidAt = new Date();
-    else billDoc.participants[idx].paidAt = undefined;
+    } else {
+      billDoc.participants[idx].paidAt = undefined;
+    }
 
     billDoc.billStatus = computeBillStatusHybrid(billDoc.participants, ownerId);
+    billDoc.markModified("participants");
     await billDoc.save();
-
-    
 
     if (!verified) {
       const reason = !receiverMatched
@@ -614,33 +778,51 @@ export async function POST(req: NextRequest, { params }: RouteCtx) {
         : !amountMatched
           ? "ยอดเงินไม่ตรง"
           : "ไม่ผ่านเงื่อนไข";
+
       return NextResponse.json<SlipCheckResponse>(
         { ok: false, message: `SlipOK: ${slip.message} (${reason})` },
         { status: 422 },
       );
     }
 
-    // ✅ แจ้งเตือนเมื่อสถานะเปลี่ยน (เว็บ + LINE)
     try {
       const nextBillStatus = billDoc.billStatus;
       const nextStatus = billDoc.participants[idx].paymentStatus;
+      const action =
+        autoPaid && nextStatus === "paid" ? "paid" : "slip_uploaded";
 
-      if (verified) {
-        const action =
-          autoPaid && nextStatus === "paid" ? "paid" : "slip_uploaded";
+      if (
+        verified &&
+        actorMode === "user" &&
+        targetUserId &&
+        sessionUserId &&
+        (prevParticipantStatus !== nextStatus || action === "slip_uploaded")
+      ) {
+        await notifyBillStatusChanged({
+          billId,
+          targetUserId,
+          actorUserId: sessionUserId,
+          action,
+        });
+      }
 
-        // แจ้งเมื่อสถานะเปลี่ยนจริง (unpaid -> paid) หรือเป็นกรณี slip_uploaded
-        if (
-          prevParticipantStatus !== nextStatus ||
-          action === "slip_uploaded"
-        ) {
-          await notifyBillStatusChanged({
-            billId,
-            targetUserId,
-            actorUserId: sessionUserId,
-            action,
-          });
-        }
+      if (
+        verified &&
+        actorMode === "guest" &&
+        targetGuestId &&
+        (prevParticipantStatus !== nextStatus || action === "slip_uploaded")
+      ) {
+        const guestName =
+          (billDoc.participants[idx].name ?? "").trim() ||
+          (await resolveGuestName(targetGuestId)) ||
+          "Guest";
+
+        await notifyGuestPaidToOwner({
+          billId,
+          guestId: targetGuestId,
+          guestName,
+          action,
+        });
       }
 
       if (prevBillStatus !== "paid" && nextBillStatus === "paid") {
@@ -674,7 +856,8 @@ export async function POST(req: NextRequest, { params }: RouteCtx) {
         amount: slip.amount,
       },
       updatedParticipant: {
-        userId: toIdString(updated.userId),
+        userId: updated.userId ? toIdString(updated.userId) : undefined,
+        guestId: updated.guestId ? toIdString(updated.guestId) : undefined,
         paymentStatus: updated.paymentStatus,
         slipInfo: updated.slipInfo
           ? {

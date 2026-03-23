@@ -2,6 +2,7 @@ import mongoose, { Schema, Model } from 'mongoose';
 
 export interface IInvite extends mongoose.Document {
   billId: mongoose.Types.ObjectId;
+  participantId: mongoose.Types.ObjectId;
   createdBy: mongoose.Types.ObjectId;
   tokenHash: string;
   revoked: boolean;
@@ -15,6 +16,7 @@ export interface IInvite extends mongoose.Document {
 const inviteSchema = new Schema<IInvite>(
   {
     billId: { type: Schema.Types.ObjectId, ref: 'Bill', required: true, index: true },
+    participantId: { type: Schema.Types.ObjectId, required: true, index: true },
     createdBy: { type: Schema.Types.ObjectId, ref: 'User', required: true, index: true },
     tokenHash: { type: String, required: true, unique: true, index: true },
 
@@ -27,7 +29,7 @@ const inviteSchema = new Schema<IInvite>(
   { timestamps: true }
 );
 
-inviteSchema.index({ billId: 1, revoked: 1, expiresAt: 1 });
+inviteSchema.index({ billId: 1, participantId: 1, revoked: 1, expiresAt: 1 });
 
 const Invite: Model<IInvite> =
   mongoose.models.Invite || mongoose.model<IInvite>('Invite', inviteSchema);

@@ -4,6 +4,10 @@ import { useSearchParams } from 'next/navigation';
 import { Suspense, useEffect, useMemo, useRef, useState, type ChangeEvent } from 'react';
 import { CheckCircleIcon } from '@heroicons/react/24/solid';
 import { useSession } from 'next-auth/react';
+import { OcrPreviewModal } from '@/components/OcrPreviewModal';
+import { useOcrPreview } from '@/lib/useOcrPreview';
+import { AddParticipantDropdown } from '@/components/AddParticipantDropdown';
+import Image from 'next/image';
 
 interface User {
   _id: string;
@@ -15,13 +19,19 @@ type SplitType = 'equal' | 'percentage' | 'personal';
 type PercentMode = 'percent' | 'amount';
 type PercentValue = number | '';
 type AmountValue = number | '';
+type ParticipantKind = 'user' | 'guest_placeholder' | 'guest';
 
 interface Participant {
-  userId: string;
+  localId: string;
+  participantId?: string;
+  kind: ParticipantKind;
+  userId?: string;
+  guestId?: string;
   name: string;
   percent?: PercentValue; // percentage
   amount: AmountValue; // personal/percentage
   pctMode?: PercentMode;
+  joinedAt?: string;
 }
 
 type ItemRow = {
@@ -31,13 +41,24 @@ type ItemRow = {
 };
 
 type SummaryRow = {
-  userId: string;
+  key: string;
+  userId?: string;
   name: string;
   amount: number;
   percent: number;
   percentInput: number;
   amountInput: number;
   pctMode: PercentMode;
+};
+
+type DraftDbParticipant = {
+  _id?: string;
+  kind?: ParticipantKind;
+  userId?: string;
+  guestId?: string;
+  name?: string;
+  amount?: number;
+  joinedAt?: string;
 };
 
 /** ✅ Type ผลลัพธ์จาก /api/ocr (ให้หน้าเว็บ "เติมฟอร์ม" อย่างเดียว ไม่ parse ซ้ำ) */
@@ -124,6 +145,58 @@ const toAmountValue = (v: string): AmountValue => {
   return money(n);
 };
 
+const makeLocalId = () =>
+  typeof crypto !== 'undefined' && 'randomUUID' in crypto
+    ? crypto.randomUUID()
+    : `${Date.now()}_${Math.random().toString(16).slice(2)}`;
+
+const btnPrimary =
+  'inline-flex items-center justify-center gap-2 rounded-xl bg-[#fb8c00] px-5 py-3 text-sm font-semibold text-white shadow-sm transition hover:bg-[#e65100] hover:shadow-md disabled:cursor-not-allowed disabled:bg-gray-300 disabled:text-gray-600';
+
+const btnSecondary =
+  'inline-flex items-center justify-center gap-2 rounded-xl border border-gray-300 bg-white px-4 py-2.5 text-sm font-medium text-gray-700 transition hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-50';
+
+function isLocalGuestLike(p: Participant) {
+  return p.kind === 'guest' || p.kind === 'guest_placeholder';
+}
+
+function isDraftGuestLike(row: DraftDbParticipant) {
+  return row.kind === 'guest' || row.kind === 'guest_placeholder' || !!row.guestId;
+}
+
+function getGuestLikeIndexFromLocalRows(rows: Participant[], localId: string) {
+  return rows.filter(isLocalGuestLike).findIndex((row) => row.localId === localId);
+}
+
+function findDraftRowForLocalParticipant(
+  localRows: Participant[],
+  localRow: Participant,
+  dbRows: DraftDbParticipant[]
+): DraftDbParticipant | undefined {
+  if (localRow.participantId) {
+    const byId = dbRows.find((row) => String(row._id ?? '') === localRow.participantId);
+    if (byId) return byId;
+  }
+
+  if (localRow.kind === 'user') {
+    return dbRows.find(
+      (row) => row.kind === 'user' && !!localRow.userId && row.userId === localRow.userId
+    );
+  }
+
+  const guestIndex = getGuestLikeIndexFromLocalRows(localRows, localRow.localId);
+  if (guestIndex === -1) return undefined;
+
+  const dbGuestRows = dbRows.filter(isDraftGuestLike);
+  return dbGuestRows[guestIndex];
+}
+
+function isSelectableParticipant(p: Participant) {
+  if (!p.name.trim()) return false;
+  if (p.kind === 'user') return !!p.userId;
+  return p.kind === 'guest_placeholder' || p.kind === 'guest';
+}
+
 function getMeByEmail(list: User[], email?: string | null): User | undefined {
   if (!email) return undefined;
   return list.find((u) => u.email === email);
@@ -168,7 +241,7 @@ function CreatePercentPageInner() {
   const [totalPrice, setTotalPrice] = useState<number | ''>('');
   const [users, setUsers] = useState<User[]>([]);
   const [participants, setParticipants] = useState<Participant[]>([
-    { userId: '', name: '', percent: '', amount: 0, pctMode: 'percent' },
+    { localId: makeLocalId(), kind: 'user', userId: '', name: '', percent: '', amount: 0, pctMode: 'percent' },
   ]);
   const [sharePerPerson, setSharePerPerson] = useState(0);
   const [description, setDescription] = useState('');
@@ -182,49 +255,58 @@ function CreatePercentPageInner() {
   const [itemList, setItemList] = useState<ItemRow[]>([{ items: '', qty: '1', price: '' }]);
 
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const directUploadInputRef = useRef<HTMLInputElement | null>(null);
   const [selectedFileName, setSelectedFileName] = useState<string>('');
 
-  // ✅ เพิ่มผู้เข้าร่วมแบบค้นหา
+  // ✅ OCR Preview Modal
+  const ocrPreview = useOcrPreview();
+  const [ocrImageFile, setOcrImageFile] = useState<File | null>(null);
+  const [selectedImagePreview, setSelectedImagePreview] = useState<string | null>(null);
+
+  const [draftBillId, setDraftBillId] = useState('');
+  const [inviteLinkByLocalId, setInviteLinkByLocalId] = useState<Record<string, string>>({});
+  const [copiedInviteLocalId, setCopiedInviteLocalId] = useState<string | null>(null);
+  const [creatingDraft, setCreatingDraft] = useState(false);
+  const [creatingInvite, setCreatingInvite] = useState(false);
+
   const [isAddParticipantOpen, setIsAddParticipantOpen] = useState(false);
-  const [addParticipantSearch, setAddParticipantSearch] = useState('');
-  const addParticipantInputRef = useRef<HTMLInputElement | null>(null);
 
   const selectedUserIds = useMemo(() => {
-    return new Set(participants.filter((p) => p.userId).map((p) => p.userId));
+    return new Set(
+      participants
+        .filter((p) => p.kind === 'user' && p.userId)
+        .map((p) => p.userId as string)
+    );
   }, [participants]);
-
-  const addParticipantCandidates = useMemo(() => {
-    const q = addParticipantSearch.trim().toLowerCase();
-
-    return users
-      .filter((u) => !selectedUserIds.has(u._id))
-      .filter((u) => {
-        if (!q) return true;
-        const name = (u.name ?? '').toLowerCase();
-        const email = (u.email ?? '').toLowerCase();
-        const id = (u._id ?? '').toLowerCase();
-        return name.includes(q) || email.includes(q) || id.includes(q);
-      })
-      .slice(0, 20);
-  }, [users, selectedUserIds, addParticipantSearch]);
-
-  useEffect(() => {
-    if (!isAddParticipantOpen) return;
-    const t = setTimeout(() => addParticipantInputRef.current?.focus(), 0);
-    return () => clearTimeout(t);
-  }, [isAddParticipantOpen]);
 
   const addParticipantByUser = (u: User) => {
     setParticipants((prev) => {
-      if (prev.some((p) => p.userId === u._id)) return prev;
-      return [...prev, { userId: u._id, name: u.name, percent: '', amount: 0, pctMode: 'percent' }];
+      if (prev.some((p) => p.kind === 'user' && p.userId === u._id)) return prev;
+      return [...prev, { localId: makeLocalId(), kind: 'user', userId: u._id, name: u.name, percent: '', amount: 0, pctMode: 'percent' }];
     });
     setIsAddParticipantOpen(false);
-    setAddParticipantSearch('');
+  };
+
+  const handleAddGuestSlot = () => {
+    const guestCount = participants.filter(
+      (p) => p.kind === 'guest_placeholder' || p.kind === 'guest'
+    ).length;
+
+    setParticipants((prev) => [
+      ...prev,
+      {
+        localId: makeLocalId(),
+        kind: 'guest_placeholder',
+        name: `Guest ${guestCount + 1}`,
+        percent: '',
+        amount: 0,
+        pctMode: 'percent',
+      },
+    ]);
   };
 
   const selectedParticipants = useMemo(
-    () => participants.filter((p) => p.userId && p.name),
+    () => participants.filter(isSelectableParticipant),
     [participants]
   );
   const selectedCount = selectedParticipants.length;
@@ -248,20 +330,45 @@ function CreatePercentPageInner() {
     if (!me) return;
 
     setParticipants((prev) => {
-      if (prev.length > 0 && prev[0].userId === me._id) return prev;
+      if (prev.length > 0 && prev[0].kind === 'user' && prev[0].userId === me._id) return prev;
 
       const headAmount = prev[0]?.amount ?? 0;
       const headPercent = prev[0]?.percent ?? '';
       const headPctMode: PercentMode = prev[0]?.pctMode ?? 'percent';
 
-      const tail = prev.slice(1).filter((p) => p.userId !== me._id);
+      const tail = prev.filter((p, index) => {
+        if (index === 0) return false;
+        return !(p.kind === 'user' && p.userId === me._id);
+      });
 
       return [
-        { userId: me._id, name: me.name, percent: headPercent, amount: headAmount, pctMode: headPctMode },
+        { localId: prev[0]?.localId ?? makeLocalId(), participantId: prev[0]?.participantId, kind: 'user', userId: me._id, name: me.name, percent: headPercent, amount: headAmount, pctMode: headPctMode },
         ...tail,
       ];
     });
   }, [users, currentUserEmail]);
+
+  const handleUploadImageDirectly = async (e: ChangeEvent<HTMLInputElement>) => {
+    const picked = e.target.files?.[0];
+    if (!picked) return;
+
+    setSelectedFileName(picked.name);
+    setUploading(true);
+
+    try {
+      const compressed = await compressImage(picked);
+      const imagePreviewUrl = URL.createObjectURL(compressed);
+      setSelectedImagePreview(imagePreviewUrl);
+      setOcrImageFile(compressed);
+    } catch (err: unknown) {
+      const errorMsg = err instanceof Error ? err.message : 'เกิดข้อผิดพลาด';
+      console.error('Direct upload error:', err);
+      alert(`อัปโหลดรูปบิลล้มเหลว: ${errorMsg}`);
+    } finally {
+      setUploading(false);
+      if (directUploadInputRef.current) directUploadInputRef.current.value = '';
+    }
+  };
 
   /**
    * ✅ OCR: เรียก route แล้วเอา parsed มาเติม field
@@ -274,92 +381,232 @@ function CreatePercentPageInner() {
     setUploading(true);
 
     try {
-      const compressed = await compressImage(picked);
+      const token = localStorage.getItem('token');
 
+      const compressed = await compressImage(picked);
       const fd = new FormData();
       fd.append('file', compressed);
 
-      const token = localStorage.getItem('token');
+      // ✅ Set 90 second timeout for OCR API (includes processing time)
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 90000);
 
-      const res = await fetch('/api/ocr', {
-        method: 'POST',
-        headers: token ? { Authorization: `Bearer ${token}` } : undefined,
-        body: fd,
-      });
+      try {
+        const res = await fetch('/api/ocr', {
+          method: 'POST',
+          headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+          body: fd,
+          signal: controller.signal,
+        });
 
-      const data = (await res.json().catch(() => null)) as TyphoonOcrResponse | null;
+        const data = (await res.json().catch(() => null)) as TyphoonOcrResponse | null;
 
-      if (!data) {
-        console.error('OCR ERROR:', res.status, data);
-        alert(`OCR ไม่สำเร็จ: HTTP ${res.status}`);
-        return;
-      }
-
-      if (!res.ok || data.ok === false) {
-        console.error('OCR ERROR:', res.status, data);
-        alert(
-          `OCR ไม่สำเร็จ: ${data.ok === false ? data.error || 'Unknown error' : `HTTP ${res.status}`
-          }`
-        );
-        return;
-      }
-
-      const parsed = data.parsed;
-
-      const rawText =
-        typeof parsed.raw_text === 'string' && parsed.raw_text.trim()
-          ? parsed.raw_text.trim()
-          : '';
-      setDescription(rawText);
-
-      const ocrTitle = typeof parsed.title === 'string' ? parsed.title.trim() : '';
-      if (ocrTitle) {
-        setTitle((prev) => (prev.trim() ? prev : ocrTitle));
-      }
-
-      const mapped: ItemRow[] = Array.isArray(parsed.items)
-        ? parsed.items
-          .map((it) => {
-            const name = String(it?.name ?? '').trim();
-            if (!name) return null;
-
-            const qtyNum = Math.max(1, Math.floor(toNumber(it.qty ?? 1, 1)));
-            const unit = money(toNumber(it.unit_price, 0));
-
-            return {
-              items: name,
-              qty: String(qtyNum),
-              price: unit.toFixed(2),
-            };
-          })
-          .filter((x): x is ItemRow => x !== null)
-        : [];
-
-      if (mapped.length > 0) {
-        setItemList([...mapped, { items: '', qty: '1', price: '' }]);
-
-        const totalFromParsed = money(toNumber(parsed.total, 0));
-        if (totalFromParsed > 0) {
-          setTotalPrice(totalFromParsed);
-        } else {
-          const sumFromItems = money(
-            mapped.reduce(
-              (sum, r) => sum + toIntQty(r.qty) * money(parseFloat(r.price) || 0),
-              0
-            )
-          );
-          setTotalPrice(sumFromItems > 0 ? sumFromItems : '');
+        if (!data) {
+          alert(`OCR ไม่สำเร็จ: HTTP ${res.status}`);
+          return;
         }
-      } else {
-        setItemList([{ items: '', qty: '1', price: '' }]);
+
+        if (!res.ok || data.ok === false) {
+          alert(
+            `OCR ไม่สำเร็จ: ${data.ok === false ? data.error || 'Unknown error' : `HTTP ${res.status}`
+            }`
+          );
+          return;
+        }
+
+        const parsed = data.parsed;
+        const rawText =
+          typeof parsed.raw_text === 'string' && parsed.raw_text.trim()
+            ? parsed.raw_text.trim()
+            : '';
+
+        // ✅ Create image preview from file
+        const reader = new FileReader();
+        reader.onload = (evt) => {
+          const imagePreviewUrl = evt.target?.result as string | null;
+          setSelectedImagePreview(imagePreviewUrl);
+
+          // ✅ Map OCR items
+          const mappedItems = Array.isArray(parsed.items) ? parsed.items : [];
+
+          // ✅ Open preview modal with all data
+          ocrPreview.openPreview(
+            {
+              title: parsed.title,
+              items: mappedItems,
+              total: parsed.total,
+              rawText,
+              receiptImageUrl: null,
+              receiptImagePublicId: null,
+            },
+            picked.name,
+            imagePreviewUrl
+          );
+
+          // ✅ Store the file for later upload if user accepts
+          setOcrImageFile(compressed);
+        };
+        reader.readAsDataURL(compressed);
+      } finally {
+        clearTimeout(timeoutId);
       }
-    } catch (err) {
-      console.error(err);
-      alert('OCR ล้มเหลว (network/server)');
+    } catch (err: unknown) {
+      const isTimeout = err instanceof Error && err.name === 'AbortError';
+      const errorMsg = isTimeout
+        ? 'OCR ใช้เวลานานเกินไป โปรดลองใหม่อีกครั้ง'
+        : 'OCR ล้มเหลว (network/server)';
+      console.error('OCR error:', err);
+      alert(errorMsg);
     } finally {
       setUploading(false);
       if (fileInputRef.current) fileInputRef.current.value = '';
     }
+  };
+
+  const onAcceptOcr = async () => {
+    ocrPreview.setLoading(true);
+
+    try {
+      const token = localStorage.getItem('token');
+      let receiptImageUrl = '';
+      let receiptImagePublicId = '';
+
+      // ✅ Upload receipt image to Cloudinary if file exists
+      if (ocrImageFile) {
+        try {
+          const fd = new FormData();
+          fd.append('file', ocrImageFile);
+
+          const uploadRes = await fetch('/api/ocr/upload-receipt', {
+            method: 'POST',
+            headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+            body: fd,
+          });
+
+          if (uploadRes.ok) {
+            const uploadData = await uploadRes.json();
+            receiptImageUrl = uploadData.url || '';
+            receiptImagePublicId = uploadData.publicId || '';
+          }
+        } catch (uploadErr) {
+          console.error('Receipt upload failed:', uploadErr);
+          // Continue even if upload fails
+        }
+      }
+
+      const previewData = ocrPreview.previewData;
+      const rawText = previewData.rawText || '';
+
+      // ✅ Set title from preview
+      const ocrTitle = previewData.title?.trim();
+      if (ocrTitle) {
+        setTitle((prev) => (prev.trim() ? prev : ocrTitle));
+      }
+
+      // ✅ Set description from raw_text
+      if (rawText) {
+        setDescription(rawText);
+      }
+
+      // ✅ Map items from preview
+      const mappedFromParsed: ItemRow[] = previewData.items
+        .map((it) => {
+          const name = String(it?.name ?? '').trim();
+          if (!name) return null;
+
+          const qtyNum = Math.max(1, toIntQty(String(it.qty ?? 1)));
+          const unit = money(toNumber(it.unit_price || 0));
+
+          return {
+            items: name,
+            qty: String(qtyNum),
+            price: unit.toFixed(2),
+          };
+        })
+        .filter((x): x is ItemRow => x !== null);
+
+      // ✅ Fallback parsing if items are empty
+      let finalItems = mappedFromParsed;
+      if (finalItems.length === 0 && rawText) {
+        const lines = rawText.split(/\r?\n/).filter((l) => l.trim());
+        const fallbackItems: ItemRow[] = [];
+
+        for (const line of lines) {
+          const trimmed = line.trim();
+          if (/^[-–]\s/.test(trimmed)) continue;
+
+          const skipKeywords = [
+            'total', 'subtotal', 'vat', 'tax', 'receipt', 'date', 'time', 'cashier', 'thank you',
+            'ยอดรวม', 'รวมทั้งสิ้น', 'ใบเสร็จ', 'วันที่', 'เวลา', 'ภาษี', 'สุทธิ', 'ค่าบริการ',
+            'service', 'charge', 'items', 'qty',
+          ];
+
+          if (skipKeywords.some((kw) => trimmed.toLowerCase().includes(kw))) continue;
+
+          const match = trimmed.match(
+            /^(?:\d+\.\s+)?(.+?)\s{2,}(\d+)\s+(\d{1,3}(?:,\d{3})*\.?\d{0,2})\s*(?:บาท|฿)?$/i
+          );
+          if (!match) continue;
+
+          const [, nameRaw, qtyRaw, priceRaw] = match;
+          const name = nameRaw.trim().replace(/^[0-9.\-*)\s]+/, '').trim();
+          if (name.length < 2) continue;
+
+          const qty = parseInt(qtyRaw, 10);
+          const price = parseFloat(priceRaw.replace(/,/g, ''));
+          if (qty <= 0 || price <= 0 || !Number.isFinite(price)) continue;
+
+          fallbackItems.push({
+            items: name.slice(0, 100),
+            qty: String(qty),
+            price: price.toFixed(2),
+          });
+        }
+
+        if (fallbackItems.length > 0) {
+          finalItems = fallbackItems;
+        }
+      }
+
+      // ✅ Set items
+      if (finalItems.length > 0) {
+        setItemList([...finalItems, { items: '', qty: '1', price: '' }]);
+      } else {
+        setItemList([{ items: '', qty: '1', price: '' }]);
+      }
+
+      // ✅ Set total price
+      const totalFromParsed = money(previewData.total || 0);
+      if (totalFromParsed > 0) {
+        setTotalPrice(totalFromParsed);
+      } else {
+        const sumFromItems = finalItems.reduce((sum, it) => {
+          const unitPrice = money(parseFloat(it.price) || 0);
+          const qty = Math.max(1, toIntQty(it.qty));
+          return sum + unitPrice * qty;
+        }, 0);
+        setTotalPrice(sumFromItems > 0 ? money(sumFromItems) : '');
+      }
+
+      // ✅ Store receipt image info (will be saved when bill is created)
+      if (receiptImageUrl) {
+        localStorage.setItem('ocrReceiptImageUrl', receiptImageUrl);
+        localStorage.setItem('ocrReceiptImagePublicId', receiptImagePublicId);
+      }
+
+      ocrPreview.closePreview();
+      setOcrImageFile(null);
+    } catch (err) {
+      console.error('Accept OCR error:', err);
+      alert('เกิดข้อผิดพลาดในการปรับปรุงข้อมูล');
+    } finally {
+      ocrPreview.setLoading(false);
+    }
+  };
+
+  const onRejectOcr = () => {
+    ocrPreview.closePreview();
+    setOcrImageFile(null);
   };
 
   const resetForm = () => {
@@ -369,24 +616,29 @@ function CreatePercentPageInner() {
     setItemList([{ items: '', qty: '1', price: '' }]);
     setParticipants(
       me
-        ? [{ userId: me._id, name: me.name, percent: '', amount: 0, pctMode: 'percent' }]
-        : [{ userId: '', name: '', percent: '', amount: 0, pctMode: 'percent' }]
+        ? [{ localId: makeLocalId(), kind: 'user', userId: me._id, name: me.name, percent: '', amount: 0, pctMode: 'percent' }]
+        : [{ localId: makeLocalId(), kind: 'user', userId: '', name: '', percent: '', amount: 0, pctMode: 'percent' }]
     );
     setSelectedFileName('');
+    setSelectedImagePreview(null);
     setTotalPrice('');
     setSharePerPerson(0);
     setUploading(false);
     setSubmitting(false);
 
+    setDraftBillId('');
+    setInviteLinkByLocalId({});
+    setCopiedInviteLocalId(null);
+    setCreatingDraft(false);
+    setCreatingInvite(false);
     setIsAddParticipantOpen(false);
-    setAddParticipantSearch('');
 
     if (fileInputRef.current) fileInputRef.current.value = '';
+    if (directUploadInputRef.current) directUploadInputRef.current.value = '';
   };
 
   const handleAddParticipant = () => {
     setIsAddParticipantOpen((v) => !v);
-    setAddParticipantSearch('');
   };
 
   const handleAddItems = () => {
@@ -442,7 +694,7 @@ function CreatePercentPageInner() {
     if (t > 0 && selectedCount > 0) {
       const share = money(t / selectedCount);
       setSharePerPerson(share);
-      setParticipants((prev) => prev.map((p) => (p.userId ? { ...p, amount: share } : { ...p, amount: 0 })));
+      setParticipants((prev) => prev.map((p) => (isSelectableParticipant(p) ? { ...p, amount: share } : { ...p, amount: 0 })));
     } else {
       setSharePerPerson(0);
       setParticipants((prev) => prev.map((p) => ({ ...p, amount: 0 })));
@@ -458,13 +710,13 @@ function CreatePercentPageInner() {
 
   const findBalanceIndex = (arr: Participant[], editedIndex: number) => {
     for (let i = arr.length - 1; i >= 0; i--) {
-      if (arr[i].userId && i !== editedIndex) return i;
+      if (isSelectableParticipant(arr[i]) && i !== editedIndex) return i;
     }
     return -1;
   };
 
   const sumAmounts = (arr: Participant[]) =>
-    money(arr.reduce((s, p) => (p.userId ? s + money(toNumber(p.amount, 0)) : s), 0));
+    money(arr.reduce((s, p) => (isSelectableParticipant(p) ? s + money(toNumber(p.amount, 0)) : s), 0));
 
   // ✅ แก้ % แล้วให้ amount ตาม + คน balance รับเศษ
   const setPercentAt = (index: number, raw: string) => {
@@ -475,7 +727,7 @@ function CreatePercentPageInner() {
 
       const next: Participant[] = prev.map((p, i): Participant => {
         if (i !== index) return p;
-        if (!p.userId) return p;
+        if (!isSelectableParticipant(p)) return p;
 
         const pctNum = typeof pct === 'number' ? pct : 0;
         const amt = total > 0 ? money((total * pctNum) / 100) : money(toNumber(p.amount, 0));
@@ -492,7 +744,7 @@ function CreatePercentPageInner() {
       const sumOtherPct = round2(
         next.reduce((s, p, i) => {
           if (i === bal) return s;
-          if (!p.userId) return s;
+          if (!isSelectableParticipant(p)) return s;
           return s + (typeof p.percent === 'number' ? p.percent : 0);
         }, 0)
       );
@@ -527,14 +779,14 @@ function CreatePercentPageInner() {
       if (total <= 0) {
         return prev.map((p, i): Participant => {
           if (i !== index) return p;
-          if (!p.userId) return p;
+          if (!isSelectableParticipant(p)) return p;
           return { ...p, amount: amt, percent: '', pctMode: 'amount' };
         });
       }
 
       const next: Participant[] = prev.map((p, i): Participant => {
         if (i !== index) return p;
-        if (!p.userId) return p;
+        if (!isSelectableParticipant(p)) return p;
 
         const amtNum = money(toNumber(amt, 0));
         const pctNum = clampPercentNum((amtNum / total) * 100);
@@ -548,7 +800,7 @@ function CreatePercentPageInner() {
       const sumOtherAmt = money(
         next.reduce((s, p, i) => {
           if (i === bal) return s;
-          if (!p.userId) return s;
+          if (!isSelectableParticipant(p)) return s;
           return s + money(toNumber(p.amount, 0));
         }, 0)
       );
@@ -581,7 +833,7 @@ function CreatePercentPageInner() {
       // หา bal = คนสุดท้ายที่มี userId
       let bal = -1;
       for (let i = prev.length - 1; i >= 0; i--) {
-        if (prev[i].userId) {
+        if (isSelectableParticipant(prev[i])) {
           bal = i;
           break;
         }
@@ -589,7 +841,7 @@ function CreatePercentPageInner() {
       if (bal === -1) return prev;
 
       const next: Participant[] = prev.map((p): Participant => {
-        if (!p.userId) return p;
+        if (!isSelectableParticipant(p)) return p;
 
         const mode: PercentMode = p.pctMode ?? 'percent';
         if (mode === 'amount') {
@@ -607,7 +859,7 @@ function CreatePercentPageInner() {
       const sumOtherAmt = money(
         next.reduce((s, p, i) => {
           if (i === bal) return s;
-          if (!p.userId) return s;
+          if (!isSelectableParticipant(p)) return s;
           return s + money(toNumber(p.amount, 0));
         }, 0)
       );
@@ -671,6 +923,7 @@ function CreatePercentPageInner() {
       const amountInput = mode === 'amount' ? amount : 0;
 
       return {
+        key: p.participantId || p.localId,
         userId: p.userId,
         name: p.name,
         amount,
@@ -704,9 +957,319 @@ function CreatePercentPageInner() {
     return round2(summary.rows.reduce((s, r) => s + r.percent, 0));
   }, [splitType, summary.rows]);
 
+  const buildDraftPayload = () => {
+    const cleanedItems = itemList
+      .map((it) => {
+        const name = (it.items || '').trim();
+        const qty = toIntQty(it.qty);
+        const unitPrice = money(toNumber(it.price, 0));
+        const lineTotal = money(qty * unitPrice);
+
+        if (!name) return null;
+
+        return {
+          items: name,
+          qty,
+          unit_price: unitPrice,
+          price: lineTotal,
+          line_total: lineTotal,
+        };
+      })
+      .filter(
+        (
+          it
+        ): it is { items: string; qty: number; unit_price: number; price: number; line_total: number } => it !== null
+      );
+
+    const cleanedParticipants = participants
+      .filter(isSelectableParticipant)
+      .map((p) => ({
+        participantId: p.participantId,
+        kind: p.kind,
+        userId: p.userId,
+        guestId: p.guestId,
+        name: p.name.trim(),
+        percent: p.percent,
+        amount: money(toNumber(p.amount, 0)),
+      }));
+
+    const itemsTotal = money(cleanedItems.reduce((sum, it) => sum + it.price, 0));
+    const effectiveTotal = typeof totalPrice === 'number' && totalPrice > 0 ? money(totalPrice) : itemsTotal;
+
+    return {
+      title: title.trim(),
+      totalPrice: effectiveTotal,
+      splitType,
+      participants: cleanedParticipants,
+      description,
+      items: cleanedItems,
+    };
+  };
+
+  const syncParticipantsFromDraft = (dbParticipants: DraftDbParticipant[]) => {
+    setParticipants((prev) =>
+      prev.map((localRow) => {
+        const matched = findDraftRowForLocalParticipant(prev, localRow, dbParticipants);
+
+        if (!matched) return localRow;
+
+        return {
+          ...localRow,
+          participantId: matched._id ? String(matched._id) : localRow.participantId,
+          guestId: matched.guestId ? String(matched.guestId) : localRow.guestId,
+          amount: typeof matched.amount === 'number' ? matched.amount : localRow.amount,
+          joinedAt: matched.joinedAt ?? localRow.joinedAt,
+          kind: matched.kind ?? localRow.kind,
+          name: String(matched.name ?? localRow.name),
+        };
+      })
+    );
+  };
+
+  const syncDraftBill = async (): Promise<{ billId: string; dbParticipants?: DraftDbParticipant[] }> => {
+    const token = localStorage.getItem('token');
+    const draftPayload = buildDraftPayload();
+
+    if (!draftBillId) {
+      setCreatingDraft(true);
+      try {
+        const res = await fetch('/api/bills/draft', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            ...(token ? { Authorization: `Bearer ${token}` } : {}),
+          },
+          body: JSON.stringify(draftPayload),
+        });
+
+        const raw = await res.text();
+        let data:
+          | { ok?: boolean; bill?: { _id?: string; participants?: DraftDbParticipant[] }; error?: string }
+          | null = null;
+
+        try {
+          data = JSON.parse(raw) as typeof data;
+        } catch {
+          data = { error: raw || `HTTP ${res.status}` };
+        }
+
+        if (!res.ok || !data?.bill?._id) {
+          throw new Error(data?.error || `บันทึก draft bill ไม่สำเร็จ (HTTP ${res.status})`);
+        }
+
+        const newDraftId = String(data.bill._id);
+        setDraftBillId(newDraftId);
+
+        if (Array.isArray(data.bill.participants)) {
+          syncParticipantsFromDraft(data.bill.participants);
+        }
+
+        return { billId: newDraftId, dbParticipants: data.bill.participants };
+      } finally {
+        setCreatingDraft(false);
+      }
+    }
+
+    setCreatingDraft(true);
+    try {
+      const res = await fetch(`/api/bills/${draftBillId}/draft`, {
+        method: 'PATCH',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+        body: JSON.stringify(draftPayload),
+      });
+
+      const raw = await res.text();
+      let data:
+        | { ok?: boolean; bill?: { _id?: string; participants?: DraftDbParticipant[] }; error?: string }
+        | null = null;
+
+      try {
+        data = JSON.parse(raw) as typeof data;
+      } catch {
+        data = { error: raw || `HTTP ${res.status}` };
+      }
+
+      if (!res.ok || !data?.bill?._id) {
+        throw new Error(data?.error || `อัปเดต draft bill ไม่สำเร็จ (HTTP ${res.status})`);
+      }
+
+      if (Array.isArray(data.bill.participants)) {
+        syncParticipantsFromDraft(data.bill.participants);
+      }
+
+      return { billId: String(data.bill._id), dbParticipants: data.bill.participants };
+    } finally {
+      setCreatingDraft(false);
+    }
+  };
+
+  const fetchDraftParticipants = async (billId: string): Promise<DraftDbParticipant[]> => {
+    const token = localStorage.getItem('token');
+
+    const res = await fetch(`/api/bills/${billId}`, {
+      headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+      cache: 'no-store',
+    });
+
+    const data = (await res.json().catch(() => null)) as { bill?: { participants?: DraftDbParticipant[] }; error?: string } | null;
+
+    if (!res.ok) {
+      throw new Error(data?.error || 'โหลด draft bill ไม่สำเร็จ');
+    }
+
+    return Array.isArray(data?.bill?.participants) ? data.bill.participants : [];
+  };
+
+  useEffect(() => {
+    if (!draftBillId) return;
+
+    let cancelled = false;
+
+    const syncLatestDraftParticipants = async () => {
+      try {
+        const rows = await fetchDraftParticipants(draftBillId);
+        if (cancelled) return;
+
+        if (rows.length > 0) {
+          syncParticipantsFromDraft(rows);
+        }
+      } catch (err) {
+        console.error('AUTO REFRESH DRAFT PARTICIPANTS ERROR:', err);
+      }
+    };
+
+    void syncLatestDraftParticipants();
+
+    const intervalId = window.setInterval(() => {
+      if (document.visibilityState === 'visible') {
+        void syncLatestDraftParticipants();
+      }
+    }, 3000);
+
+    const handleFocus = () => {
+      void syncLatestDraftParticipants();
+    };
+
+    window.addEventListener('focus', handleFocus);
+    document.addEventListener('visibilitychange', handleFocus);
+
+    return () => {
+      cancelled = true;
+      window.clearInterval(intervalId);
+      window.removeEventListener('focus', handleFocus);
+      document.removeEventListener('visibilitychange', handleFocus);
+    };
+  }, [draftBillId]);
+
+  const resolveParticipantIdForInvite = async (
+    billId: string,
+    localTarget: Participant,
+    seedParticipants?: DraftDbParticipant[]
+  ): Promise<string> => {
+    if (localTarget.participantId) return localTarget.participantId;
+
+    let source = seedParticipants ?? [];
+
+    if (source.length === 0) {
+      source = await fetchDraftParticipants(billId);
+    }
+
+    if (source.length > 0) {
+      syncParticipantsFromDraft(source);
+    }
+
+    const guestLikeLocalRows = participants.filter(
+      (p) => p.kind === 'guest' || p.kind === 'guest_placeholder'
+    );
+    const guestLikeDbRows = source.filter(
+      (p) => p.kind === 'guest' || p.kind === 'guest_placeholder' || !!p.guestId
+    );
+
+    if (localTarget.kind === 'user') {
+      const byUser = source.find(
+        (row) => row.kind === 'user' && row.userId === localTarget.userId
+      );
+      return byUser?._id ? String(byUser._id) : '';
+    }
+
+    const localIndex = guestLikeLocalRows.findIndex(
+      (row) => row.localId === localTarget.localId
+    );
+    if (localIndex === -1) return '';
+
+    const matched = guestLikeDbRows[localIndex];
+    return matched?._id ? String(matched._id) : '';
+  };
+
+  const handleCreateInvite = async (participantLocalId: string) => {
+    if (creatingDraft || creatingInvite || submitting) return;
+
+    try {
+      const existingUrl = inviteLinkByLocalId[participantLocalId];
+      if (existingUrl) {
+        await navigator.clipboard.writeText(existingUrl);
+        setCopiedInviteLocalId(participantLocalId);
+
+        window.setTimeout(() => {
+          setCopiedInviteLocalId((prev) => (prev === participantLocalId ? null : prev));
+        }, 1500);
+
+        return;
+      }
+
+      const token = localStorage.getItem('token');
+      const localTarget = participants.find((p) => p.localId === participantLocalId);
+
+      if (!localTarget) throw new Error('ไม่พบ guest slot');
+      if (localTarget.kind !== 'guest_placeholder') {
+        throw new Error('สร้างลิงก์ได้เฉพาะ guest slot ที่ยังไม่ถูก claim');
+      }
+
+      const { billId, dbParticipants } = await syncDraftBill();
+      const participantId = await resolveParticipantIdForInvite(billId, localTarget, dbParticipants);
+
+      if (!participantId) throw new Error('ยังไม่ได้ participantId ของ guest slot');
+
+      setCreatingInvite(true);
+
+      const inviteRes = await fetch(`/api/bills/${billId}/invite`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+        body: JSON.stringify({ participantId, expiresInDays: 7, maxUses: 1 }),
+      });
+
+      const inviteData = (await inviteRes.json().catch(() => null)) as { invitePath?: string; error?: string } | null;
+
+      if (!inviteRes.ok || !inviteData?.invitePath) {
+        throw new Error(inviteData?.error || 'สร้างลิงก์เชิญไม่สำเร็จ');
+      }
+
+      const fullUrl = `${window.location.origin}${inviteData.invitePath}`;
+
+      setInviteLinkByLocalId((prev) => ({ ...prev, [participantLocalId]: fullUrl }));
+      await navigator.clipboard.writeText(fullUrl);
+      setCopiedInviteLocalId(participantLocalId);
+
+      window.setTimeout(() => {
+        setCopiedInviteLocalId((prev) => (prev === participantLocalId ? null : prev));
+      }, 1500);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'เกิดข้อผิดพลาด';
+      alert(message);
+    } finally {
+      setCreatingInvite(false);
+    }
+  };
+
   // ✅ กันดับเบิ้ลคลิ๊กสร้างบิล + ปัด/จำกัดเงินก่อนส่ง
   const handleSubmit = async () => {
-    if (submitting) return;
+    if (submitting || creatingDraft || creatingInvite) return;
     setSubmitting(true);
 
     try {
@@ -729,9 +1292,12 @@ function CreatePercentPageInner() {
         .filter((it) => it.items.length > 0);
 
       const cleanedParticipantsBase = participants
-        .filter((p) => p.userId && p.name)
+        .filter(isSelectableParticipant)
         .map((p) => ({
+          participantId: p.participantId,
+          kind: p.kind,
           userId: p.userId,
+          guestId: p.guestId,
           name: p.name,
           percent: p.percent,
           amount: p.amount,
@@ -745,7 +1311,15 @@ function CreatePercentPageInner() {
       const itemsTotal = money(cleanedItems.reduce((sum, it) => sum + it.price, 0));
       const effectiveTotal = typeof totalPrice === 'number' && totalPrice > 0 ? money(totalPrice) : itemsTotal;
 
-      let cleanedParticipants: Array<{ userId: string; name: string; percent?: number | ''; amount: number }> = [];
+      let cleanedParticipants: Array<{
+        participantId?: string;
+        kind: ParticipantKind;
+        userId?: string;
+        guestId?: string;
+        name: string;
+        percent?: number | '';
+        amount: number;
+      }> = [];
 
       if (splitType === 'personal') {
         const hasInvalid = cleanedParticipantsBase.some((p) => !(money(toNumber(p.amount, 0)) > 0));
@@ -760,7 +1334,10 @@ function CreatePercentPageInner() {
         }
 
         cleanedParticipants = cleanedParticipantsBase.map((p) => ({
+          participantId: p.participantId,
+          kind: p.kind,
           userId: p.userId,
+          guestId: p.guestId,
           name: p.name,
           percent: '',
           amount: money(toNumber(p.amount, 0)),
@@ -773,17 +1350,17 @@ function CreatePercentPageInner() {
 
           if (mode === 'amount') {
             const amt = money(toNumber(p.amount, 0));
-            if (!(amt > 0)) return { userId: p.userId, name: p.name, percent: NaN, amount: 0, mode };
+            if (!(amt > 0)) return { participantId: p.participantId, kind: p.kind, userId: p.userId, guestId: p.guestId, name: p.name, percent: NaN, amount: 0, mode };
             const percent = round2((amt / effectiveTotal) * 100);
-            return { userId: p.userId, name: p.name, percent, amount: amt, mode };
+            return { participantId: p.participantId, kind: p.kind, userId: p.userId, guestId: p.guestId, name: p.name, percent, amount: amt, mode };
           }
 
           const pctNum = p.percent === '' || p.percent === undefined ? NaN : Number(p.percent);
-          if (!Number.isFinite(pctNum)) return { userId: p.userId, name: p.name, percent: NaN, amount: 0, mode };
+          if (!Number.isFinite(pctNum)) return { participantId: p.participantId, kind: p.kind, userId: p.userId, guestId: p.guestId, name: p.name, percent: NaN, amount: 0, mode };
 
           const pct = round2(Math.max(0, Math.min(100, pctNum)));
           const amt = money((effectiveTotal * pct) / 100);
-          return { userId: p.userId, name: p.name, percent: pct, amount: amt, mode };
+          return { participantId: p.participantId, kind: p.kind, userId: p.userId, guestId: p.guestId, name: p.name, percent: pct, amount: amt, mode };
         });
 
         const hasMissing = temp.some((p) => !Number.isFinite(p.percent));
@@ -808,7 +1385,10 @@ function CreatePercentPageInner() {
         }
 
         cleanedParticipants = temp.map((p) => ({
+          participantId: p.participantId,
+          kind: p.kind,
           userId: p.userId,
+          guestId: p.guestId,
           name: p.name,
           amount: money(p.amount),
           percent: round2((money(p.amount) / effectiveTotal) * 100),
@@ -818,7 +1398,10 @@ function CreatePercentPageInner() {
         const share = count > 0 ? money(effectiveTotal / count) : 0;
 
         cleanedParticipants = cleanedParticipantsBase.map((p) => ({
+          participantId: p.participantId,
+          kind: p.kind,
           userId: p.userId,
+          guestId: p.guestId,
           name: p.name,
           percent: '',
           amount: share,
@@ -833,8 +1416,11 @@ function CreatePercentPageInner() {
         }
       }
 
-      const res = await fetch('/api/bills', {
-        method: 'POST',
+      const endpoint = draftBillId ? `/api/bills/${draftBillId}/publish` : '/api/bills';
+      const method = draftBillId ? 'PATCH' : 'POST';
+
+      const res = await fetch(endpoint, {
+        method,
         headers: {
           'Content-Type': 'application/json',
           ...(token ? { Authorization: `Bearer ${token}` } : {}),
@@ -870,7 +1456,7 @@ function CreatePercentPageInner() {
       })();
 
       if (res.ok) {
-        alert('สร้างบิลสำเร็จ!');
+        alert(draftBillId ? 'เปิดบิลสำเร็จ!' : 'สร้างบิลสำเร็จ!');
         resetForm();
       } else {
         console.log('CREATE BILL ERROR:', res.status, data);
@@ -904,25 +1490,46 @@ function CreatePercentPageInner() {
             <p className="text-lg text-[#4a4a4a] mb-2">Upload a receipt or drag and drop</p>
             <p className="text-xs text-gray-400 mb-2">PNG, JPG up to 10MB</p>
 
-            {selectedFileName ? (
-              <p className="text-xs text-gray-500 mb-4">
-                Selected: <span className="font-medium">{selectedFileName}</span>
-              </p>
+            {selectedImagePreview ? (
+              <div className="mb-4 relative">
+                <div className="relative mb-3 h-64 w-full overflow-hidden rounded-2xl border border-gray-200 bg-white">
+                  <Image
+                    src={selectedImagePreview}
+                    alt="Receipt preview"
+                    fill
+                    unoptimized
+                    className="object-contain"
+                  />
+                </div>
+                <p className="text-xs text-gray-500">
+                  Selected: <span className="font-medium">{selectedFileName}</span>
+                </p>
+              </div>
             ) : (
               <div className="mb-4" />
             )}
 
             <input ref={fileInputRef} type="file" accept="image/*" className="hidden" onChange={handleReceiptChange} />
+            <input ref={directUploadInputRef} type="file" accept="image/*" className="hidden" onChange={handleUploadImageDirectly} />
 
-            <button
-              type="button"
-              onClick={() => fileInputRef.current?.click()}
-              className="bg-[#fb8c00] text-white py-3 px-6 rounded-lg hover:bg-[#e65100] transition duration-300 disabled:bg-gray-300 disabled:text-gray-600 disabled:cursor-not-allowed"
-              disabled={uploading || submitting}
-            >
-              {uploading ? 'Processing...' : 'Upload Image'}
-            </button>
-
+            <div className="flex gap-3 flex-wrap justify-center">
+              <button
+                type="button"
+                onClick={() => fileInputRef.current?.click()}
+                className={btnPrimary}
+                disabled={uploading || submitting}
+              >
+                {uploading ? 'Processing...' : '🤖 Scan with OCR'}
+              </button>
+              <button
+                type="button"
+                onClick={() => directUploadInputRef.current?.click()}
+                className={btnSecondary}
+                disabled={uploading || submitting}
+              >
+                {uploading ? 'Processing...' : '📸 Upload Only'}
+              </button>
+            </div>
 
           </div>
 
@@ -1017,165 +1624,211 @@ function CreatePercentPageInner() {
             <label className="block mb-1 text-sm text-gray-600">Participants</label>
 
             <div className="space-y-3">
-              {participants.map((participant, index) => (
-                <div key={index} className="flex gap-2 items-center">
-                  <select
-                    className="flex-1 p-3 border border-gray-300 rounded-lg bg-white text-gray-800 focus:outline-none focus:ring-2 focus:ring-[#fb8c00]"
-                    value={participant.userId}
-                    disabled={index === 0}
-                    onChange={(e) =>
-                      setParticipants((prev) =>
-                        prev.map((p, i): Participant =>
-                          i === index
-                            ? {
-                              ...p,
-                              userId: e.target.value,
-                              name: users.find((u) => u._id === e.target.value)?.name || '',
-                            }
-                            : p
-                        )
-                      )
-                    }
-                  >
-                    <option value="">-- เลือกผู้ใช้ --</option>
+              {participants.map((participant, index) => {
+                const isOwnerRow = Boolean(
+                  index === 0 &&
+                  participant.kind === 'user' &&
+                  participant.userId &&
+                  users.find((u) => u.email === currentUserEmail)?._id === participant.userId
+                );
+                const isGuestSlot = participant.kind === 'guest_placeholder' || participant.kind === 'guest';
+                const canEditSplitValue = participant.kind === 'user' ? !!participant.userId : isGuestSlot;
 
-                    {users
-                      .filter((u) => !participants.some((p) => p.userId === u._id && p.userId !== participant.userId))
-                      .map((u) => (
-                        <option key={u._id} value={u._id}>
-                          {u.name}
-                          {u.email === currentUserEmail ? ' (You)' : ''}
-                        </option>
-                      ))}
-                  </select>
-
-                  {splitType === 'percentage' && (
-                    <>
-                      <div className="w-24">
-                        <input
-                          type="number"
-                          min={0}
-                          max={100}
-                          step={0.01}
-                          inputMode="decimal"
-                          disabled={!participant.userId}
-                          className="w-full p-3 border border-gray-300 rounded-lg bg-white text-gray-800 focus:outline-none focus:ring-2 focus:ring-[#fb8c00] disabled:bg-gray-100"
-                          placeholder="%"
-                          value={participant.percent === '' || participant.percent === undefined ? '' : participant.percent}
-                          onChange={(e) => setPercentAt(index, e.target.value)}
-                        />
+                return (
+                  <div key={participant.localId} className="flex gap-2 items-center">
+                    {participant.kind === 'user' ? (
+                      <select
+                        className="flex-1 p-3 border border-gray-300 rounded-lg bg-white text-gray-800 focus:outline-none focus:ring-2 focus:ring-[#fb8c00]"
+                        value={participant.userId ?? ''}
+                        disabled={isOwnerRow}
+                        onChange={(e) =>
+                          setParticipants((prev) =>
+                            prev.map((p): Participant =>
+                              p.localId === participant.localId
+                                ? {
+                                    ...p,
+                                    userId: e.target.value,
+                                    name: users.find((u) => u._id === e.target.value)?.name || '',
+                                  }
+                                : p
+                            )
+                          )
+                        }
+                      >
+                        <option value="">-- เลือกผู้ใช้ --</option>
+                        {users
+                          .filter(
+                            (u) =>
+                              !participants.some(
+                                (p) =>
+                                  p.localId !== participant.localId &&
+                                  p.kind === 'user' &&
+                                  p.userId === u._id
+                              )
+                          )
+                          .map((u) => (
+                            <option key={u._id} value={u._id}>
+                              {u.name}
+                              {u.email === currentUserEmail ? ' (You)' : ''}
+                            </option>
+                          ))}
+                      </select>
+                    ) : (
+                      <div className="flex-1 p-3 border border-gray-300 rounded-lg bg-gray-50 text-gray-800">
+                        <div className="flex items-center gap-2">
+                          <span className="font-medium">{participant.name}</span>
+                          <span className="text-xs px-2 py-0.5 rounded-full bg-gray-200 text-gray-600">
+                            {participant.kind === 'guest' ? 'Guest joined' : 'Guest slot'}
+                          </span>
+                        </div>
                       </div>
+                    )}
 
+                    {splitType === 'percentage' && (
+                      <>
+                        <div className="w-24">
+                          <input
+                            type="number"
+                            min={0}
+                            max={100}
+                            step={0.01}
+                            inputMode="decimal"
+                            disabled={!canEditSplitValue}
+                            className="w-full p-3 border border-gray-300 rounded-lg bg-white text-gray-800 focus:outline-none focus:ring-2 focus:ring-[#fb8c00] disabled:bg-gray-100"
+                            placeholder="%"
+                            value={participant.percent === '' || participant.percent === undefined ? '' : participant.percent}
+                            onChange={(e) => setPercentAt(index, e.target.value)}
+                          />
+                        </div>
+
+                        <div className="w-32">
+                          <input
+                            type="text"
+                            inputMode="decimal"
+                            disabled={!canEditSplitValue}
+                            className="w-full p-3 border border-gray-300 rounded-lg bg-white text-gray-800 focus:outline-none focus:ring-2 focus:ring-[#fb8c00] disabled:bg-gray-100"
+                            placeholder="฿"
+                            value={participant.amount === '' ? '' : money(Number(participant.amount)).toFixed(2)}
+                            onChange={(e) => setAmountAt(index, e.target.value)}
+                          />
+                        </div>
+                      </>
+                    )}
+
+                    {splitType === 'personal' && (
                       <div className="w-32">
                         <input
                           type="text"
                           inputMode="decimal"
-                          disabled={!participant.userId}
+                          disabled={!canEditSplitValue}
                           className="w-full p-3 border border-gray-300 rounded-lg bg-white text-gray-800 focus:outline-none focus:ring-2 focus:ring-[#fb8c00] disabled:bg-gray-100"
                           placeholder="฿"
                           value={participant.amount === '' ? '' : money(Number(participant.amount)).toFixed(2)}
-                          onChange={(e) => setAmountAt(index, e.target.value)}
+                          onChange={(e) => {
+                            const normalized = normalizeMoneyInput(e.target.value);
+                            const amt = normalized === '' ? '' : toAmountValue(normalized);
+                            setParticipants((prev) =>
+                              prev.map((p): Participant =>
+                                p.localId === participant.localId ? { ...p, amount: amt } : p
+                              )
+                            );
+                          }}
                         />
                       </div>
-                    </>
-                  )}
+                    )}
 
-                  {splitType === 'personal' && (
-                    <div className="w-32">
-                      <input
-                        type="text"
-                        inputMode="decimal"
-                        className="w-full p-3 border border-gray-300 rounded-lg bg-white text-gray-800 focus:outline-none focus:ring-2 focus:ring-[#fb8c00]"
-                        placeholder="฿"
-                        value={participant.amount === '' ? '' : money(Number(participant.amount)).toFixed(2)}
-                        onChange={(e) => {
-                          const normalized = normalizeMoneyInput(e.target.value);
-                          const amt = normalized === '' ? '' : toAmountValue(normalized);
-                          setParticipants((prev) => prev.map((p, i): Participant => (i === index ? { ...p, amount: amt } : p)));
-                        }}
-                      />
-                    </div>
-                  )}
+                    {isGuestSlot ? (
+                      <button
+                        type="button"
+                        disabled={
+                          participant.kind !== 'guest_placeholder' ||
+                          creatingDraft ||
+                          creatingInvite ||
+                          submitting
+                        }
+                        onClick={() => handleCreateInvite(participant.localId)}
+                        className={`px-3 py-2 rounded-lg text-sm border ${
+                          participant.kind !== 'guest_placeholder' || creatingDraft || creatingInvite || submitting
+                            ? 'border-gray-200 text-gray-400 cursor-not-allowed bg-gray-50'
+                            : copiedInviteLocalId === participant.localId
+                              ? 'border-green-300 text-green-700 bg-green-50'
+                              : inviteLinkByLocalId[participant.localId]
+                                ? 'border-blue-300 text-blue-700 hover:bg-blue-50'
+                                : 'border-orange-300 text-orange-700 hover:bg-orange-50'
+                        }`}
+                      >
+                        {copiedInviteLocalId === participant.localId
+                          ? '✅ คัดลอกแล้ว'
+                          : inviteLinkByLocalId[participant.localId]
+                            ? '📋 คัดลอกลิงก์'
+                            : '🔗 เชิญ'}
+                      </button>
+                    ) : null}
 
-                  <button
-                    type="button"
-                    disabled={index === 0}
-                    onClick={() => {
-                      if (index === 0) return;
-                      setParticipants((prev) => (prev.length > 1 ? prev.filter((_, i) => i !== index) : prev));
-                    }}
-                    className={`px-5 py-2 rounded-lg transition-all duration-200 shadow-sm ${index === 0
-                      ? 'bg-gray-200 text-gray-400 cursor-not-allowed'
-                      : 'bg-red-500 text-white hover:bg-red-600 hover:scale-105'
+                    <button
+                      type="button"
+                      disabled={isOwnerRow}
+                      onClick={() => {
+                        if (isOwnerRow) return;
+                        setParticipants((prev) =>
+                          prev.length > 1 ? prev.filter((p) => p.localId !== participant.localId) : prev
+                        );
+                        setInviteLinkByLocalId((prev) => {
+                          const next = { ...prev };
+                          delete next[participant.localId];
+                          return next;
+                        });
+                        setCopiedInviteLocalId((prev) =>
+                          prev === participant.localId ? null : prev
+                        );
+                      }}
+                      className={`px-5 py-2 rounded-lg transition-all duration-200 shadow-sm ${
+                        isOwnerRow
+                          ? 'bg-gray-200 text-gray-400 cursor-not-allowed'
+                          : 'bg-red-500 text-white hover:bg-red-600 hover:scale-105'
                       }`}
-                  >
-                    🗑
-                  </button>
-                </div>
-              ))}
+                    >
+                      🗑
+                    </button>
+                  </div>
+                );
+              })}
             </div>
 
-            <button
-              onClick={handleAddParticipant}
-              className="mt-3 text-sm text-[#fb8c00] font-medium hover:text-[#e65100]"
-              type="button"
-            >
-              ➕ เพิ่มผู้เข้าร่วม
-            </button>
+            <div className="mt-3 flex flex-wrap items-center gap-3">
+              <button
+                onClick={handleAddParticipant}
+                className="text-sm text-[#fb8c00] font-medium hover:text-[#e65100]"
+                type="button"
+              >
+                ➕ เพิ่มผู้เข้าร่วม
+              </button>
+
+              <button
+                onClick={handleAddGuestSlot}
+                className="text-sm text-[#fb8c00] font-medium hover:text-[#e65100]"
+                type="button"
+              >
+                ➕ เพิ่ม Guest Slot
+              </button>
+
+              {draftBillId ? (
+                <span className="text-xs px-2 py-1 rounded-full bg-orange-50 text-orange-700 border border-orange-200">
+                  Draft created
+                </span>
+              ) : null}
+            </div>
 
             {isAddParticipantOpen && (
-              <div className="mt-3 rounded-xl border border-gray-200 bg-white p-4">
-                <div className="flex gap-2">
-                  <input
-                    ref={addParticipantInputRef}
-                    type="text"
-                    className="w-full p-3 border border-gray-300 rounded-lg bg-white text-gray-800 placeholder:text-gray-400 focus:outline-none focus:ring-2 focus:ring-[#fb8c00]"
-                    placeholder="ค้นหาชื่อ / email / userId..."
-                    value={addParticipantSearch}
-                    onChange={(e) => setAddParticipantSearch(e.target.value)}
-                  />
-
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setIsAddParticipantOpen(false);
-                      setAddParticipantSearch('');
-                    }}
-                    className="px-4 rounded-lg border border-gray-300 text-gray-700 hover:bg-gray-50"
-                  >
-                    ปิด
-                  </button>
-                </div>
-
-                <p className="text-xs text-gray-400 mt-2">พบ {addParticipantCandidates.length} คน</p>
-
-                <div className="mt-2 max-h-56 overflow-auto">
-                  {addParticipantCandidates.length === 0 ? (
-                    <p className="text-sm text-gray-500 py-3 text-center">ไม่พบผู้ใช้</p>
-                  ) : (
-                    <div className="space-y-2">
-                      {addParticipantCandidates.map((u) => (
-                        <button
-                          key={u._id}
-                          type="button"
-                          onClick={() => addParticipantByUser(u)}
-                          className="w-full text-left p-3 rounded-lg border border-gray-200 hover:bg-gray-50 transition"
-                        >
-                          <div className="flex items-center justify-between gap-3">
-                            <div className="min-w-0">
-                              <p className="text-sm font-medium text-gray-800 truncate">
-                                {u.name} {u.email === currentUserEmail ? '(You)' : ''}
-                              </p>
-                              <p className="text-xs text-gray-400 truncate">{u.email}</p>
-                            </div>
-                            <span className="text-xs font-semibold text-[#fb8c00]">เพิ่ม</span>
-                          </div>
-                        </button>
-                      ))}
-                    </div>
-                  )}
-                </div>
-              </div>
+              <AddParticipantDropdown
+                isOpen={isAddParticipantOpen}
+                onClose={() => {
+                  setIsAddParticipantOpen(false);
+                }}
+                onAddParticipant={addParticipantByUser}
+                selectedUserIds={selectedUserIds}
+                currentUserEmail={currentUserEmail}
+              />
             )}
           </div>
 
@@ -1242,7 +1895,7 @@ function CreatePercentPageInner() {
               ) : (
                 <div className="space-y-2">
                   {summary.rows.map((p) => (
-                    <div key={p.userId} className="flex items-center justify-between">
+                    <div key={p.key} className="flex items-center justify-between">
                       <div className="text-[#4a4a4a]">
                         {p.name} ({summary.total > 0 ? p.percent.toFixed(0) : '0'}%)
                         <div className="text-xs text-gray-500">
@@ -1277,6 +1930,19 @@ function CreatePercentPageInner() {
           </div>
         </div>
       </div>
+
+      {/* ✅ OCR Preview Modal */}
+      <OcrPreviewModal
+        isOpen={ocrPreview.isOpen}
+        title={ocrPreview.previewData.title}
+        items={ocrPreview.previewData.items}
+        total={ocrPreview.previewData.total}
+        imagePreview={ocrPreview.imagePreview}
+        fileName={ocrPreview.selectedFileName}
+        onAccept={onAcceptOcr}
+        onReject={onRejectOcr}
+        isLoading={ocrPreview.isLoading}
+      />
     </div>
   );
 }

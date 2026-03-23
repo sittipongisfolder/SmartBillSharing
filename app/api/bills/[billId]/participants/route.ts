@@ -4,7 +4,6 @@ import { authOptions } from '@/lib/authOptions';
 import Bill from '@/models/bill';
 import { connectMongoDB } from '@/lib/mongodb';
 
-// ✅ NOTI
 import { notifyBillStatusChanged, notifyBillClosed } from '@/lib/notify';
 
 type PaymentStatus = 'unpaid' | 'pending' | 'paid';
@@ -14,11 +13,13 @@ interface SessionUserWithId extends DefaultUser {
 }
 
 interface UpdateParticipantBody {
-  userId: string;
+  userId?: string;
+  guestId?: string;
   paymentStatus: PaymentStatus;
 
   slipInfo?: {
     imageUrl?: string;
+    publicId?: string;
     provider?: string;
     reference?: string;
     checkedAt?: string;
@@ -27,12 +28,15 @@ interface UpdateParticipantBody {
 }
 
 interface ParticipantDoc {
-  userId: unknown; // ObjectId หรือ string หรือ populate object
+  userId?: unknown;
+  guestId?: unknown;
+  kind?: 'user' | 'guest_placeholder' | 'guest';
   name: string;
   amount: number;
   paymentStatus?: PaymentStatus;
   slipInfo?: {
     imageUrl?: string;
+    publicId?: string;
     provider?: string;
     reference?: string;
     checkedAt?: Date;
@@ -41,7 +45,6 @@ interface ParticipantDoc {
   paidAt?: Date;
 }
 
-// ✅ helper: แปลง id ให้เป็น string แบบปลอดภัย (ไม่ใช้ any)
 function toIdString(v: unknown): string {
   if (!v) return '';
   if (typeof v === 'string') return v;
@@ -59,11 +62,6 @@ function toIdString(v: unknown): string {
   return '';
 }
 
-/**
- * ✅ Hybrid: billStatus ดูเฉพาะ "ลูกบิล" (คนที่ไม่ใช่ createdBy)
- * - หัวบิล paid แล้ว "ไม่ทำให้บิล pending"
- * - ถ้าไม่มีลูกบิลเลย (มีแต่หัวบิลคนเดียว) => paid
- */
 function computeBillStatus(
   participants: Array<{ userId?: unknown; paymentStatus?: PaymentStatus }>,
   createdById: string
@@ -81,6 +79,8 @@ function computeBillStatus(
   return 'unpaid';
 }
 
+
+
 type RouteContext = { params: Promise<{ billId: string }> };
 
 export async function PATCH(req: NextRequest, context: RouteContext) {
@@ -93,14 +93,13 @@ export async function PATCH(req: NextRequest, context: RouteContext) {
     const user = session.user as SessionUserWithId;
     const sessionUserId = user.id;
 
-    // ✅ บรรทัดนี้ใช้ได้เหมือนเดิม ไม่ต้องแก้
     const { billId } = await context.params;
-
     const body = (await req.json()) as UpdateParticipantBody;
 
-    if (!body.userId) {
-      return NextResponse.json({ error: 'userId is required' }, { status: 400 });
+    if (!body.userId && !body.guestId) {
+      return NextResponse.json({ error: 'userId or guestId is required' }, { status: 400 });
     }
+
     if (!body.paymentStatus) {
       return NextResponse.json({ error: 'paymentStatus is required' }, { status: 400 });
     }
@@ -117,9 +116,12 @@ export async function PATCH(req: NextRequest, context: RouteContext) {
       return NextResponse.json({ error: 'Bill ownerId missing' }, { status: 500 });
     }
 
-    // ✅ สิทธิ์: ให้ participant คนนั้นอัปเดตตัวเอง หรือ owner อัปเดตได้
     const isOwner = sessionUserId === ownerId;
-    const isSelf = sessionUserId === String(body.userId);
+    const isTargetUser = typeof body.userId === 'string' && body.userId.length > 0;
+    const targetUserId = isTargetUser ? String(body.userId) : '';
+    const targetGuestId = typeof body.guestId === 'string' && body.guestId.length > 0 ? String(body.guestId) : '';
+
+    const isSelf = isTargetUser ? sessionUserId === targetUserId : false;
 
     if (!isOwner && !isSelf) {
       return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
@@ -127,33 +129,32 @@ export async function PATCH(req: NextRequest, context: RouteContext) {
 
     const participants = billDoc.participants as unknown as ParticipantDoc[];
 
-    const targetUserId = String(body.userId);
-    const idx = participants.findIndex((p) => toIdString(p.userId) === targetUserId);
+    const idx = participants.findIndex((p) => {
+      if (targetGuestId) return toIdString(p.guestId) === targetGuestId;
+      return toIdString(p.userId) === targetUserId;
+    });
 
     if (idx === -1) {
       return NextResponse.json({ error: 'Participant not found in this bill' }, { status: 404 });
     }
 
-    // ✅ NOTI snapshot
     const prevBillStatus = (billDoc.billStatus as PaymentStatus) ?? 'unpaid';
     const prevStatus = (participants[idx].paymentStatus ?? 'unpaid') as PaymentStatus;
     const prevSlipUrl = participants[idx].slipInfo?.imageUrl ?? '';
     const incomingSlipUrl =
       typeof body.slipInfo?.imageUrl === 'string' ? body.slipInfo.imageUrl.trim() : '';
 
-    // ✅ Hybrid rule: หัวบิลต้อง paid เสมอ
-    const isTargetOwner = targetUserId === ownerId;
+    const isTargetOwner = targetUserId !== '' && targetUserId === ownerId;
 
-    // ✅ normalize pending -> paid (กัน schema พัง)
     const normalized: PaymentStatus = body.paymentStatus === 'pending' ? 'paid' : body.paymentStatus;
-
     const nextStatus: PaymentStatus = isTargetOwner ? 'paid' : normalized;
+
     participants[idx].paymentStatus = nextStatus;
 
-    // ✅ update slipInfo (ถ้าส่งมา)
     if (body.slipInfo) {
       participants[idx].slipInfo = {
         imageUrl: body.slipInfo.imageUrl ?? participants[idx].slipInfo?.imageUrl ?? '',
+        publicId: body.slipInfo.publicId ?? participants[idx].slipInfo?.publicId,
         provider: body.slipInfo.provider ?? participants[idx].slipInfo?.provider ?? '',
         reference: body.slipInfo.reference ?? participants[idx].slipInfo?.reference ?? '',
         checkedAt: body.slipInfo.checkedAt
@@ -166,31 +167,24 @@ export async function PATCH(req: NextRequest, context: RouteContext) {
       };
     }
 
-    // ✅ paidAt: ถ้าไม่ใช่ paid ต้องล้าง
     if (nextStatus === 'paid') {
       participants[idx].paidAt = new Date();
     } else {
       participants[idx].paidAt = undefined;
     }
 
-    // ✅ อัปเดตสถานะรวมของบิล (Hybrid: ignore หัวบิล)
     billDoc.billStatus = computeBillStatus(participants, ownerId);
-
-    // ✅ เผื่อ mongoose ไม่ detect nested change บางเคส
     billDoc.markModified('participants');
 
-    // ✅ NOTI flags
     const statusChanged = prevStatus !== nextStatus;
     const slipUploaded = incomingSlipUrl.length > 0 && incomingSlipUrl !== prevSlipUrl;
 
-    // ✅ notify.ts รองรับแค่ 'paid' | 'slip_uploaded'
     const action: 'paid' | 'slip_uploaded' | null =
       slipUploaded ? 'slip_uploaded' : (statusChanged && nextStatus === 'paid' ? 'paid' : null);
 
     await billDoc.save();
 
-    // ✅ NOTI: ยิงครั้งเดียวพอ (notify.ts จะจัดการแจ้ง target + owner ให้อัตโนมัติ)
-    if (action) {
+    if (action && targetUserId) {
       try {
         await notifyBillStatusChanged({
           billId,
@@ -203,7 +197,6 @@ export async function PATCH(req: NextRequest, context: RouteContext) {
       }
     }
 
-    // ✅ NOTI: ถ้าบิลเพิ่งปิด (ไม่ใช่ paid -> paid)
     const nextBillStatus = (billDoc.billStatus as PaymentStatus) ?? 'unpaid';
     if (prevBillStatus !== 'paid' && nextBillStatus === 'paid') {
       try {
@@ -226,4 +219,3 @@ export async function PATCH(req: NextRequest, context: RouteContext) {
     return NextResponse.json({ error: 'Server error' }, { status: 500 });
   }
 }
-  

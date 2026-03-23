@@ -4,6 +4,10 @@ import { useSearchParams } from 'next/navigation';
 import { Suspense, useEffect, useMemo, useRef, useState, type ChangeEvent } from 'react';
 import { CheckCircleIcon } from '@heroicons/react/24/solid';
 import { useSession } from 'next-auth/react';
+import { OcrPreviewModal } from '@/components/OcrPreviewModal';
+import { useOcrPreview } from '@/lib/useOcrPreview';
+import { AddParticipantDropdown } from '@/components/AddParticipantDropdown';
+import Image from 'next/image';
 
 interface User {
   _id: string;
@@ -12,10 +16,16 @@ interface User {
 }
 
 type SplitType = 'equal' | 'percentage' | 'personal';
+type ParticipantKind = 'user' | 'guest_placeholder' | 'guest';
 
 type ParticipantRow = {
-  userId: string;
+  localId: string;
+  participantId?: string;
+  kind: ParticipantKind;
+  userId?: string;
+  guestId?: string;
   name: string;
+  joinedAt?: string;
 };
 
 type ItemRow = {
@@ -23,8 +33,18 @@ type ItemRow = {
   items: string;
   qty: string;
   price: string; // unit price
-  ownerId: string; // userId หรือ "__shared__"
+  ownerId: string; // participant localId หรือ "__shared__"
   sharedWith: string[];
+};
+
+type DraftDbParticipant = {
+  _id?: string;
+  kind?: ParticipantKind;
+  userId?: string;
+  guestId?: string;
+  name?: string;
+  amount?: number;
+  joinedAt?: string;
 };
 
 type TyphoonOcrResponse =
@@ -52,6 +72,12 @@ const makeId = () =>
   typeof crypto !== 'undefined' && 'randomUUID' in crypto
     ? crypto.randomUUID()
     : `${Date.now()}_${Math.random().toString(16).slice(2)}`;
+
+const btnPrimary =
+  'inline-flex items-center justify-center gap-2 rounded-xl bg-[#fb8c00] px-5 py-3 text-sm font-semibold text-white shadow-sm transition hover:bg-[#e65100] hover:shadow-md disabled:cursor-not-allowed disabled:bg-gray-300 disabled:text-gray-600';
+
+const btnSecondary =
+  'inline-flex items-center justify-center gap-2 rounded-xl border border-gray-300 bg-white px-4 py-2.5 text-sm font-medium text-gray-700 transition hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-50';
 
 const MAX_INT_DIGITS = 6;
 const MAX_MONEY = 999999.99;
@@ -125,6 +151,47 @@ function getMeByEmail(list: User[], email?: string | null): User | undefined {
   return list.find((u) => u.email === email);
 }
 
+function isLocalGuestLike(p: ParticipantRow) {
+  return p.kind === 'guest' || p.kind === 'guest_placeholder';
+}
+
+function isDraftGuestLike(row: DraftDbParticipant) {
+  return row.kind === 'guest' || row.kind === 'guest_placeholder' || !!row.guestId;
+}
+
+function getGuestLikeIndexFromLocalRows(rows: ParticipantRow[], localId: string) {
+  return rows.filter(isLocalGuestLike).findIndex((row) => row.localId === localId);
+}
+
+function findDraftRowForLocalParticipant(
+  localRows: ParticipantRow[],
+  localRow: ParticipantRow,
+  dbRows: DraftDbParticipant[]
+): DraftDbParticipant | undefined {
+  if (localRow.participantId) {
+    const byId = dbRows.find((row) => String(row._id ?? '') === localRow.participantId);
+    if (byId) return byId;
+  }
+
+  if (localRow.kind === 'user') {
+    return dbRows.find(
+      (row) => row.kind === 'user' && !!localRow.userId && row.userId === localRow.userId
+    );
+  }
+
+  const guestIndex = getGuestLikeIndexFromLocalRows(localRows, localRow.localId);
+  if (guestIndex === -1) return undefined;
+
+  const dbGuestRows = dbRows.filter(isDraftGuestLike);
+  return dbGuestRows[guestIndex];
+}
+
+function isSelectableParticipant(p: ParticipantRow) {
+  if (!p.name.trim()) return false;
+  if (p.kind === 'user') return !!p.userId;
+  return p.kind === 'guest_placeholder' || p.kind === 'guest';
+}
+
 async function compressImage(
   file: File,
   maxW = 1600,
@@ -165,12 +232,12 @@ function CreateBillPersonalPageInner() {
   const currentUserEmail = session?.user?.email ?? null;
 
   const fileInputRef = useRef<HTMLInputElement | null>(null);
-  const addParticipantInputRef = useRef<HTMLInputElement | null>(null);
+  const directUploadInputRef = useRef<HTMLInputElement | null>(null);
 
   const [title, setTitle] = useState('');
   const [users, setUsers] = useState<User[]>([]);
   const [participants, setParticipants] = useState<ParticipantRow[]>([
-    { userId: '', name: '' },
+    { localId: makeId(), kind: 'user', userId: '', name: '' },
   ]);
 
   const [itemList, setItemList] = useState<ItemRow[]>([
@@ -189,51 +256,58 @@ function CreateBillPersonalPageInner() {
   const [uploading, setUploading] = useState(false);
   const [submitting, setSubmitting] = useState(false);
 
+  // ✅ OCR Preview Modal
+  const ocrPreview = useOcrPreview();
+  const [ocrImageFile, setOcrImageFile] = useState<File | null>(null);
+  const [selectedImagePreview, setSelectedImagePreview] = useState<string | null>(null);
+
+  const [draftBillId, setDraftBillId] = useState('');
+  const [inviteLinkByLocalId, setInviteLinkByLocalId] = useState<Record<string, string>>({});
+  const [copiedInviteLocalId, setCopiedInviteLocalId] = useState<string | null>(null);
+  const [creatingDraft, setCreatingDraft] = useState(false);
+  const [creatingInvite, setCreatingInvite] = useState(false);
+
   const [isAddParticipantOpen, setIsAddParticipantOpen] = useState(false);
-  const [addParticipantSearch, setAddParticipantSearch] = useState('');
 
   const selectedParticipants = useMemo(
-    () => participants.filter((p) => p.userId && p.name),
+    () => participants.filter(isSelectableParticipant),
     [participants]
   );
 
   const selectedIds = useMemo(
-    () => selectedParticipants.map((p) => p.userId),
+    () => selectedParticipants.map((p) => p.localId),
     [selectedParticipants]
   );
 
   const selectedUserIds = useMemo(() => {
-    return new Set(participants.filter((p) => p.userId).map((p) => p.userId));
+    return new Set(
+      participants
+        .filter((p) => p.kind === 'user' && p.userId)
+        .map((p) => p.userId as string)
+    );
   }, [participants]);
-
-  const addParticipantCandidates = useMemo(() => {
-    const q = addParticipantSearch.trim().toLowerCase();
-
-    return users
-      .filter((u) => !selectedUserIds.has(u._id))
-      .filter((u) => {
-        if (!q) return true;
-        const name = (u.name ?? '').toLowerCase();
-        const email = (u.email ?? '').toLowerCase();
-        const id = (u._id ?? '').toLowerCase();
-        return name.includes(q) || email.includes(q) || id.includes(q);
-      })
-      .slice(0, 30);
-  }, [users, selectedUserIds, addParticipantSearch]);
-
-  useEffect(() => {
-    if (!isAddParticipantOpen) return;
-    const t = setTimeout(() => addParticipantInputRef.current?.focus(), 0);
-    return () => clearTimeout(t);
-  }, [isAddParticipantOpen]);
 
   const addParticipantByUser = (u: User) => {
     setParticipants((prev) => {
-      if (prev.some((p) => p.userId === u._id)) return prev;
-      return [...prev, { userId: u._id, name: u.name }];
+      if (prev.some((p) => p.kind === 'user' && p.userId === u._id)) return prev;
+      return [...prev, { localId: makeId(), kind: 'user', userId: u._id, name: u.name }];
     });
     setIsAddParticipantOpen(false);
-    setAddParticipantSearch('');
+  };
+
+  const handleAddGuestSlot = () => {
+    const guestCount = participants.filter(
+      (p) => p.kind === 'guest_placeholder' || p.kind === 'guest'
+    ).length;
+
+    setParticipants((prev) => [
+      ...prev,
+      {
+        localId: makeId(),
+        kind: 'guest_placeholder',
+        name: `Guest ${guestCount + 1}`,
+      },
+    ]);
   };
 
   useEffect(() => {
@@ -273,12 +347,34 @@ function CreateBillPersonalPageInner() {
     if (!me) return;
 
     setParticipants((prev) => {
-      if (prev.length > 0 && prev[0].userId === me._id) return prev;
+      if (prev.length > 0 && prev[0].kind === 'user' && prev[0].userId === me._id) return prev;
 
-      const tail = prev.filter((p, i) => i !== 0 && p.userId !== me._id);
-      return [{ userId: me._id, name: me.name }, ...tail];
+      const tail = prev.filter((p, i) => i !== 0 && !(p.kind === 'user' && p.userId === me._id));
+      return [{ localId: prev[0]?.localId ?? makeId(), participantId: prev[0]?.participantId, kind: 'user', userId: me._id, name: me.name }, ...tail];
     });
   }, [users, currentUserEmail]);
+
+  const handleUploadImageDirectly = async (e: ChangeEvent<HTMLInputElement>) => {
+    const picked = e.target.files?.[0];
+    if (!picked) return;
+
+    setSelectedFileName(picked.name);
+    setUploading(true);
+
+    try {
+      const compressed = await compressImage(picked);
+      const imagePreviewUrl = URL.createObjectURL(compressed);
+      setSelectedImagePreview(imagePreviewUrl);
+      setOcrImageFile(compressed);
+    } catch (err: unknown) {
+      const errorMsg = err instanceof Error ? err.message : 'เกิดข้อผิดพลาด';
+      console.error('Direct upload error:', err);
+      alert(`อัปโหลดรูปบิลล้มเหลว: ${errorMsg}`);
+    } finally {
+      setUploading(false);
+      if (directUploadInputRef.current) directUploadInputRef.current.value = '';
+    }
+  };
 
   useEffect(() => {
     const validIds = new Set(selectedIds);
@@ -309,7 +405,7 @@ function CreateBillPersonalPageInner() {
     });
 
     const total = money(lineTotals.reduce((s, it) => s + it.lineTotal, 0));
-    const validIds = new Set(selectedParticipants.map((p) => p.userId));
+    const validIds = new Set(selectedParticipants.map((p) => p.localId));
 
     const personalByUser: Record<string, number> = {};
     const sharedByUser: Record<string, number> = {};
@@ -348,8 +444,8 @@ function CreateBillPersonalPageInner() {
     }
 
     const perParticipant = selectedParticipants.map((p) => {
-      const personal = personalByUser[p.userId] || 0;
-      const shared = sharedByUser[p.userId] || 0;
+      const personal = personalByUser[p.localId] || 0;
+      const shared = sharedByUser[p.localId] || 0;
       const amount = money(personal + shared);
       const percent = total > 0 ? (amount / total) * 100 : 0;
       return { ...p, personal, shared, amount, percent };
@@ -372,14 +468,30 @@ function CreateBillPersonalPageInner() {
 
   const handleAddParticipant = () => {
     setIsAddParticipantOpen((v) => !v);
-    setAddParticipantSearch('');
   };
 
   const handleRemoveParticipant = (index: number) => {
-    if (index === 0) return;
-    setParticipants((prev) =>
-      prev.length > 1 ? prev.filter((_, i) => i !== index) : prev
+    const target = participants[index];
+    if (!target) return;
+
+    const isOwnerRow = Boolean(
+      index === 0 &&
+      target.kind === 'user' &&
+      target.userId &&
+      users.find((u) => u.email === currentUserEmail)?._id === target.userId
     );
+
+    if (isOwnerRow) return;
+
+    setParticipants((prev) =>
+      prev.length > 1 ? prev.filter((p) => p.localId !== target.localId) : prev
+    );
+    setInviteLinkByLocalId((prev) => {
+      const next = { ...prev };
+      delete next[target.localId];
+      return next;
+    });
+    setCopiedInviteLocalId((prev) => (prev === target.localId ? null : prev));
   };
 
   const handleAddItem = () => {
@@ -466,10 +578,15 @@ function CreateBillPersonalPageInner() {
     const me = getMeByEmail(users, currentUserEmail);
     if (!me) return;
 
+    const myParticipant = participants.find(
+      (p) => p.kind === 'user' && p.userId === me._id
+    );
+    if (!myParticipant) return;
+
     setItemList((prev) =>
       prev.map((it) =>
         !it.ownerId && it.items.trim()
-          ? { ...it, ownerId: me._id, sharedWith: [] }
+          ? { ...it, ownerId: myParticipant.localId, sharedWith: [] }
           : it
       )
     );
@@ -490,13 +607,18 @@ function CreateBillPersonalPageInner() {
     setTitle('');
     setDescription('');
     setSelectedFileName('');
+    setSelectedImagePreview(null);
     setUploading(false);
     setSubmitting(false);
     setIsAddParticipantOpen(false);
-    setAddParticipantSearch('');
+    setDraftBillId('');
+    setInviteLinkByLocalId({});
+    setCopiedInviteLocalId(null);
+    setCreatingDraft(false);
+    setCreatingInvite(false);
 
     setParticipants(
-      me ? [{ userId: me._id, name: me.name }] : [{ userId: '', name: '' }]
+      me ? [{ localId: makeId(), kind: 'user', userId: me._id, name: me.name }] : [{ localId: makeId(), kind: 'user', userId: '', name: '' }]
     );
 
     setItemList([
@@ -511,80 +633,148 @@ function CreateBillPersonalPageInner() {
     ]);
 
     if (fileInputRef.current) fileInputRef.current.value = '';
+    if (directUploadInputRef.current) directUploadInputRef.current.value = '';
   };
 
-  const runOcr = async (file: File) => {
-    const MAX_MB = 10;
-    if (file.size > MAX_MB * 1024 * 1024) {
-      alert(`ไฟล์ใหญ่เกิน ${MAX_MB}MB`);
-      return;
-    }
+  const handleReceiptChange = async (e: ChangeEvent<HTMLInputElement>) => {
+    const picked = e.target.files?.[0];
+    if (!picked) return;
 
-    setSelectedFileName(file.name);
+    setSelectedFileName(picked.name);
     setUploading(true);
 
     try {
-      const compressed = await compressImage(file);
+      const compressed = await compressImage(picked);
 
       const fd = new FormData();
       fd.append('file', compressed);
 
-      const res = await fetch('/api/ocr', {
-        method: 'POST',
-        body: fd,
-        credentials: 'include',
-      });
+      // ✅ Set 90 second timeout for OCR API (includes processing time)
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 90000);
 
-      const data = (await res.json().catch(() => null)) as TyphoonOcrResponse | null;
+      try {
+        const res = await fetch('/api/ocr', {
+          method: 'POST',
+          credentials: 'include',
+          body: fd,
+          signal: controller.signal,
+        });
 
-      if (!data) {
-        alert(`OCR ไม่สำเร็จ: HTTP ${res.status}`);
-        console.error('OCR ERROR:', res.status, data);
-        return;
+        const data = (await res.json().catch(() => null)) as TyphoonOcrResponse | null;
+
+        if (!data) {
+          alert(`OCR ไม่สำเร็จ: HTTP ${res.status}`);
+          return;
+        }
+
+        if (!res.ok || data.ok === false) {
+          alert(
+            `OCR ไม่สำเร็จ: ${data.ok === false ? data.error || 'Unknown error' : `HTTP ${res.status}`}`
+          );
+          return;
+        }
+
+        const parsed = data.parsed;
+        const rawText =
+          typeof parsed.raw_text === 'string' && parsed.raw_text.trim()
+            ? parsed.raw_text.trim()
+            : '';
+
+        // ✅ Create image preview from file
+        const reader = new FileReader();
+        reader.onload = (evt) => {
+          const imagePreviewUrl = evt.target?.result as string | null;
+          setSelectedImagePreview(imagePreviewUrl);
+
+          // ✅ Map OCR items
+          const mappedItems = Array.isArray(parsed.items) ? parsed.items : [];
+
+          // ✅ Open preview modal with all data
+          ocrPreview.openPreview(
+            {
+              title: parsed.title,
+              items: mappedItems,
+              total: parsed.total,
+              rawText,
+              receiptImageUrl: null,
+              receiptImagePublicId: null,
+            },
+            picked.name,
+            imagePreviewUrl
+          );
+
+          // ✅ Store the file for later upload if user accepts
+          setOcrImageFile(compressed);
+        };
+        reader.readAsDataURL(compressed);
+      } finally {
+        clearTimeout(timeoutId);
+      }
+    } catch (err: unknown) {
+      const isTimeout = err instanceof Error && err.name === 'AbortError';
+      const errorMsg = isTimeout
+        ? 'OCR ใช้เวลานานเกินไป โปรดลองใหม่อีกครั้ง'
+        : 'OCR ล้มเหลว (network/server)';
+      console.error('OCR error:', err);
+      alert(errorMsg);
+    } finally {
+      setUploading(false);
+      if (fileInputRef.current) fileInputRef.current.value = '';
+    }
+  };
+
+  const onAcceptOcr = async () => {
+    ocrPreview.setLoading(true);
+
+    try {
+      let receiptImageUrl = '';
+      let receiptImagePublicId = '';
+
+      // ✅ Upload receipt image to Cloudinary if file exists
+      if (ocrImageFile) {
+        try {
+          const fd = new FormData();
+          fd.append('file', ocrImageFile);
+
+          const uploadRes = await fetch('/api/ocr/upload-receipt', {
+            method: 'POST',
+            credentials: 'include',
+            body: fd,
+          });
+
+          if (uploadRes.ok) {
+            const uploadData = await uploadRes.json();
+            receiptImageUrl = uploadData.url || '';
+            receiptImagePublicId = uploadData.publicId || '';
+          }
+        } catch (uploadErr) {
+          console.error('Receipt upload failed:', uploadErr);
+          // Continue even if upload fails
+        }
       }
 
-      if (!res.ok || data.ok === false) {
-        const msg =
-          data.ok === false ? data.error || 'Unknown error' : `HTTP ${res.status}`;
-        alert(`OCR ไม่สำเร็จ: ${msg}`);
-        console.error('OCR ERROR:', res.status, data);
-        return;
+      const previewData = ocrPreview.previewData;
+      const rawText = previewData.rawText || '';
+
+      // ✅ Set title from preview
+      const ocrTitle = previewData.title?.trim();
+      if (ocrTitle) {
+        setTitle((prev) => (prev.trim() ? prev : ocrTitle));
       }
 
-      const parsed = data.parsed;
-
-      if (!title.trim() && parsed.title?.trim()) {
-        setTitle(parsed.title.trim());
+      // ✅ Set description from raw_text
+      if (rawText) {
+        setDescription(rawText);
       }
 
-      const rawText =
-        typeof parsed.raw_text === 'string' && parsed.raw_text.trim()
-          ? parsed.raw_text.trim()
-          : '';
-      setDescription(rawText);
-
-      const rawItems = Array.isArray(parsed.items) ? parsed.items : [];
-      if (!rawItems.length) {
-        setItemList([
-          {
-            id: makeId(),
-            items: '',
-            qty: '1',
-            price: '',
-            ownerId: '',
-            sharedWith: [],
-          },
-        ]);
-        return;
-      }
-
+      // ✅ Map items from preview
       const defaultOwner =
-        participants[0]?.userId ||
-        getMeByEmail(users, currentUserEmail)?._id ||
+        participants[0]?.localId ||
         '';
 
-      const nextItems = rawItems
-        .map<ItemRow | null>((it) => {
+      const mappedFromParsed: ItemRow[] = previewData.items
+        .map((it) => {
           const name = sanitizeItemText(String(it?.name ?? '').trim());
           if (!name) return null;
 
@@ -602,38 +792,377 @@ function CreateBillPersonalPageInner() {
         })
         .filter((x): x is ItemRow => x !== null);
 
-      setItemList(
-        nextItems.length > 0
-          ? nextItems
-          : [
-              {
-                id: makeId(),
-                items: '',
-                qty: '1',
-                price: '',
-                ownerId: '',
-                sharedWith: [],
-              },
-            ]
-      );
+      // ✅ Fallback parsing if items are empty
+      let finalItems: ItemRow[] = [...mappedFromParsed];
+      if (finalItems.length === 0 && rawText) {
+        const lines = rawText.split(/\r?\n/).filter((l) => l.trim());
+        finalItems = [];
+
+        for (const line of lines) {
+          const trimmed = line.trim();
+          if (/^[-–]\s/.test(trimmed)) continue;
+
+          const skipKeywords = [
+            'total', 'subtotal', 'vat', 'tax', 'receipt', 'date', 'time', 'cashier', 'thank you',
+            'ยอดรวม', 'รวมทั้งสิ้น', 'ใบเสร็จ', 'วันที่', 'เวลา', 'ภาษี', 'สุทธิ', 'ค่าบริการ',
+            'service', 'charge', 'items', 'qty',
+          ];
+
+          if (skipKeywords.some((kw) => trimmed.toLowerCase().includes(kw))) continue;
+
+          const match = trimmed.match(
+            /^(?:\d+\.\s+)?(.+?)\s{2,}(\d+)\s+(\d{1,3}(?:,\d{3})*\.?\d{0,2})\s*(?:บาท|฿)?$/i
+          );
+          if (!match) continue;
+
+          const [, nameRaw, qtyRaw, priceRaw] = match;
+          const name = sanitizeItemText(nameRaw.trim());
+          if (name.length < 2) continue;
+
+          const qty = parseInt(qtyRaw, 10);
+          const price = parseFloat(priceRaw.replace(/,/g, ''));
+
+          if (qty <= 0 || price <= 0 || !Number.isFinite(price)) continue;
+
+          finalItems.push({
+            id: makeId(),
+            items: name.slice(0, 100),
+            qty: String(qty),
+            price: price.toFixed(2),
+            ownerId: defaultOwner,
+            sharedWith: [] as string[],
+          });
+        }
+      }
+
+      // ✅ Set items
+      if (finalItems.length > 0) {
+        setItemList(finalItems);
+      } else {
+        setItemList([
+          {
+            id: makeId(),
+            items: '',
+            qty: '1',
+            price: '',
+            ownerId: '',
+            sharedWith: [],
+          },
+        ]);
+      }
+
+      // ✅ Store receipt image info (will be saved when bill is created)
+      if (receiptImageUrl) {
+        localStorage.setItem('ocrReceiptImageUrl', receiptImageUrl);
+        localStorage.setItem('ocrReceiptImagePublicId', receiptImagePublicId);
+      }
+
+      ocrPreview.closePreview();
+      setOcrImageFile(null);
     } catch (err) {
-      console.error(err);
-      alert('OCR ล้มเหลว (network/server)');
+      console.error('Accept OCR error:', err);
+      alert('เกิดข้อผิดพลาดในการปรับปรุงข้อมูล');
     } finally {
-      setUploading(false);
-      if (fileInputRef.current) fileInputRef.current.value = '';
+      ocrPreview.setLoading(false);
     }
   };
 
-  const handleReceiptChange = async (e: ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    await runOcr(file);
+  const onRejectOcr = () => {
+    ocrPreview.closePreview();
+    setOcrImageFile(null);
+  };
+
+  const buildDraftPayload = () => {
+    const cleanedItems = itemList
+      .map((it) => {
+        const name = (it.items || '').trim();
+        if (!name) return null;
+
+        const qty = toQty(it.qty);
+        const unitPrice = money(toNum(it.price, 0));
+        const lineTotal = money(qty * unitPrice);
+
+        return {
+          items: name,
+          qty,
+          unit_price: unitPrice,
+          price: lineTotal,
+          line_total: lineTotal,
+        };
+      })
+      .filter(
+        (
+          x
+        ): x is { items: string; qty: number; unit_price: number; price: number; line_total: number } => x !== null
+      );
+
+    const cleanedParticipants = participants
+      .filter(isSelectableParticipant)
+      .map((p) => ({
+        participantId: p.participantId,
+        kind: p.kind,
+        userId: p.userId,
+        guestId: p.guestId,
+        name: p.name.trim(),
+        amount: money(
+          calc.perParticipant.find((row) => row.localId === p.localId)?.amount ?? 0
+        ),
+      }));
+
+    return {
+      title: title.trim(),
+      totalPrice: money(calc.total),
+      splitType: 'personal' as const,
+      participants: cleanedParticipants,
+      description,
+      items: cleanedItems,
+    };
+  };
+
+  const syncParticipantsFromDraft = (dbParticipants: DraftDbParticipant[]) => {
+    setParticipants((prev) =>
+      prev.map((localRow) => {
+        const matched = findDraftRowForLocalParticipant(prev, localRow, dbParticipants);
+        if (!matched) return localRow;
+
+        return {
+          ...localRow,
+          participantId: matched._id ? String(matched._id) : localRow.participantId,
+          guestId: matched.guestId ? String(matched.guestId) : localRow.guestId,
+          joinedAt: matched.joinedAt ?? localRow.joinedAt,
+          kind: matched.kind ?? localRow.kind,
+          name: String(matched.name ?? localRow.name),
+        };
+      })
+    );
+  };
+
+  const syncDraftBill = async (): Promise<{ billId: string; dbParticipants?: DraftDbParticipant[] }> => {
+    const draftPayload = buildDraftPayload();
+
+    if (!draftBillId) {
+      setCreatingDraft(true);
+      try {
+        const res = await fetch('/api/bills/draft', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          credentials: 'include',
+          body: JSON.stringify(draftPayload),
+        });
+
+        const raw = await res.text();
+        let data:
+          | { ok?: boolean; bill?: { _id?: string; participants?: DraftDbParticipant[] }; error?: string }
+          | null = null;
+
+        try {
+          data = JSON.parse(raw) as typeof data;
+        } catch {
+          data = { error: raw || `HTTP ${res.status}` };
+        }
+
+        if (!res.ok || !data?.bill?._id) {
+          throw new Error(data?.error || `บันทึก draft bill ไม่สำเร็จ (HTTP ${res.status})`);
+        }
+
+        const newDraftId = String(data.bill._id);
+        setDraftBillId(newDraftId);
+
+        if (Array.isArray(data.bill.participants)) {
+          syncParticipantsFromDraft(data.bill.participants);
+        }
+
+        return { billId: newDraftId, dbParticipants: data.bill.participants };
+      } finally {
+        setCreatingDraft(false);
+      }
+    }
+
+    setCreatingDraft(true);
+    try {
+      const res = await fetch(`/api/bills/${draftBillId}/draft`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify(draftPayload),
+      });
+
+      const raw = await res.text();
+      let data:
+        | { ok?: boolean; bill?: { _id?: string; participants?: DraftDbParticipant[] }; error?: string }
+        | null = null;
+
+      try {
+        data = JSON.parse(raw) as typeof data;
+      } catch {
+        data = { error: raw || `HTTP ${res.status}` };
+      }
+
+      if (!res.ok || !data?.bill?._id) {
+        throw new Error(data?.error || `อัปเดต draft bill ไม่สำเร็จ (HTTP ${res.status})`);
+      }
+
+      if (Array.isArray(data.bill.participants)) {
+        syncParticipantsFromDraft(data.bill.participants);
+      }
+
+      return { billId: String(data.bill._id), dbParticipants: data.bill.participants };
+    } finally {
+      setCreatingDraft(false);
+    }
+  };
+
+  const fetchDraftParticipants = async (billId: string): Promise<DraftDbParticipant[]> => {
+    const res = await fetch(`/api/bills/${billId}`, {
+      credentials: 'include',
+      cache: 'no-store',
+    });
+
+    const data = (await res.json().catch(() => null)) as { bill?: { participants?: DraftDbParticipant[] }; error?: string } | null;
+
+    if (!res.ok) {
+      throw new Error(data?.error || 'โหลด draft bill ไม่สำเร็จ');
+    }
+
+    return Array.isArray(data?.bill?.participants) ? data.bill.participants : [];
+  };
+
+  useEffect(() => {
+    if (!draftBillId) return;
+
+    let cancelled = false;
+
+    const syncLatestDraftParticipants = async () => {
+      try {
+        const rows = await fetchDraftParticipants(draftBillId);
+        if (cancelled) return;
+        if (rows.length > 0) syncParticipantsFromDraft(rows);
+      } catch (err) {
+        console.error('AUTO REFRESH DRAFT PARTICIPANTS ERROR:', err);
+      }
+    };
+
+    void syncLatestDraftParticipants();
+
+    const intervalId = window.setInterval(() => {
+      if (document.visibilityState === 'visible') {
+        void syncLatestDraftParticipants();
+      }
+    }, 3000);
+
+    const handleFocus = () => {
+      void syncLatestDraftParticipants();
+    };
+
+    window.addEventListener('focus', handleFocus);
+    document.addEventListener('visibilitychange', handleFocus);
+
+    return () => {
+      cancelled = true;
+      window.clearInterval(intervalId);
+      window.removeEventListener('focus', handleFocus);
+      document.removeEventListener('visibilitychange', handleFocus);
+    };
+  }, [draftBillId]);
+
+  const resolveParticipantIdForInvite = async (
+    billId: string,
+    localTarget: ParticipantRow,
+    seedParticipants?: DraftDbParticipant[]
+  ): Promise<string> => {
+    if (localTarget.participantId) return localTarget.participantId;
+
+    let source = seedParticipants ?? [];
+    if (source.length === 0) {
+      source = await fetchDraftParticipants(billId);
+    }
+
+    if (source.length > 0) {
+      syncParticipantsFromDraft(source);
+    }
+
+    const guestLikeLocalRows = participants.filter(
+      (p) => p.kind === 'guest' || p.kind === 'guest_placeholder'
+    );
+    const guestLikeDbRows = source.filter(
+      (p) => p.kind === 'guest' || p.kind === 'guest_placeholder' || !!p.guestId
+    );
+
+    if (localTarget.kind === 'user') {
+      const byUser = source.find(
+        (row) => row.kind === 'user' && row.userId === localTarget.userId
+      );
+      return byUser?._id ? String(byUser._id) : '';
+    }
+
+    const localIndex = guestLikeLocalRows.findIndex(
+      (row) => row.localId === localTarget.localId
+    );
+    if (localIndex === -1) return '';
+
+    const matched = guestLikeDbRows[localIndex];
+    return matched?._id ? String(matched._id) : '';
+  };
+
+  const handleCreateInvite = async (participantLocalId: string) => {
+    if (creatingDraft || creatingInvite || submitting) return;
+
+    try {
+      const existingUrl = inviteLinkByLocalId[participantLocalId];
+      if (existingUrl) {
+        await navigator.clipboard.writeText(existingUrl);
+        setCopiedInviteLocalId(participantLocalId);
+
+        window.setTimeout(() => {
+          setCopiedInviteLocalId((prev) => (prev === participantLocalId ? null : prev));
+        }, 1500);
+
+        return;
+      }
+
+      const localTarget = participants.find((p) => p.localId === participantLocalId);
+      if (!localTarget) throw new Error('ไม่พบ guest slot');
+      if (localTarget.kind !== 'guest_placeholder') {
+        throw new Error('สร้างลิงก์ได้เฉพาะ guest slot ที่ยังไม่ถูก claim');
+      }
+
+      const { billId, dbParticipants } = await syncDraftBill();
+      const participantId = await resolveParticipantIdForInvite(billId, localTarget, dbParticipants);
+      if (!participantId) throw new Error('ยังไม่ได้ participantId ของ guest slot');
+
+      setCreatingInvite(true);
+
+      const inviteRes = await fetch(`/api/bills/${billId}/invite`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({ participantId, expiresInDays: 7, maxUses: 1 }),
+      });
+
+      const inviteData = (await inviteRes.json().catch(() => null)) as { invitePath?: string; error?: string } | null;
+      if (!inviteRes.ok || !inviteData?.invitePath) {
+        throw new Error(inviteData?.error || 'สร้างลิงก์เชิญไม่สำเร็จ');
+      }
+
+      const fullUrl = `${window.location.origin}${inviteData.invitePath}`;
+      setInviteLinkByLocalId((prev) => ({ ...prev, [participantLocalId]: fullUrl }));
+      await navigator.clipboard.writeText(fullUrl);
+      setCopiedInviteLocalId(participantLocalId);
+
+      window.setTimeout(() => {
+        setCopiedInviteLocalId((prev) => (prev === participantLocalId ? null : prev));
+      }, 1500);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'เกิดข้อผิดพลาด';
+      alert(message);
+    } finally {
+      setCreatingInvite(false);
+    }
   };
 
   const formatSharedNames = (ids: string[]) => {
     const names = ids
-      .map((id) => selectedParticipants.find((p) => p.userId === id)?.name)
+      .map((id) => selectedParticipants.find((p) => p.localId === id)?.name)
       .filter(Boolean) as string[];
 
     if (names.length === 0) return 'Shared';
@@ -677,7 +1206,7 @@ function CreateBillPersonalPageInner() {
             it.ownerId === '__shared__'
               ? `[Shared:${formatSharedNames(it.sharedWith || [])}]`
               : it.ownerId
-                ? `[${selectedParticipants.find((p) => p.userId === it.ownerId)?.name || 'Owner'}]`
+                ? `[${selectedParticipants.find((p) => p.localId === it.ownerId)?.name || 'Owner'}]`
                 : '';
 
           const displayName = `${tag} ${name}`.trim();
@@ -708,13 +1237,19 @@ function CreateBillPersonalPageInner() {
         );
 
       const cleanedParticipants = calc.perParticipant.map((p) => ({
+        participantId: p.participantId,
+        kind: p.kind,
         userId: p.userId,
+        guestId: p.guestId,
         name: p.name,
         amount: money(p.amount),
       }));
 
-      const res = await fetch('/api/bills', {
-        method: 'POST',
+      const endpoint = draftBillId ? `/api/bills/${draftBillId}/publish` : '/api/bills';
+      const method = draftBillId ? 'PATCH' : 'POST';
+
+      const res = await fetch(endpoint, {
+        method,
         headers: { 'Content-Type': 'application/json' },
         credentials: 'include',
         body: JSON.stringify({
@@ -738,7 +1273,7 @@ function CreateBillPersonalPageInner() {
       }
 
       if (res.ok) {
-        alert('สร้างบิลสำเร็จ!');
+        alert(draftBillId ? 'เปิดบิลสำเร็จ!' : 'สร้างบิลสำเร็จ!');
         resetForm();
       } else {
         console.log('CREATE BILL ERROR:', res.status, data);
@@ -773,10 +1308,21 @@ function CreateBillPersonalPageInner() {
             <p className="text-lg text-[#4a4a4a] mb-2">Upload a receipt or drag and drop</p>
             <p className="text-xs text-gray-400 mb-2">PNG, JPG up to 10MB</p>
 
-            {selectedFileName ? (
-              <p className="text-xs text-gray-500 mb-4">
-                Selected: <span className="font-medium">{selectedFileName}</span>
-              </p>
+            {selectedImagePreview ? (
+              <div className="mb-4 relative">
+                <div className="relative mb-3 h-64 w-full overflow-hidden rounded-2xl border border-gray-200 bg-white">
+                  <Image
+                    src={selectedImagePreview}
+                    alt="Receipt preview"
+                    fill
+                    unoptimized
+                    className="object-contain"
+                  />
+                </div>
+                <p className="text-xs text-gray-500">
+                  Selected: <span className="font-medium">{selectedFileName}</span>
+                </p>
+              </div>
             ) : (
               <div className="mb-4" />
             )}
@@ -788,15 +1334,32 @@ function CreateBillPersonalPageInner() {
               className="hidden"
               onChange={handleReceiptChange}
             />
+            <input
+              ref={directUploadInputRef}
+              type="file"
+              accept="image/*"
+              className="hidden"
+              onChange={handleUploadImageDirectly}
+            />
 
-            <button
-              type="button"
-              onClick={() => fileInputRef.current?.click()}
-              className="bg-[#fb8c00] text-white py-3 px-6 rounded-lg hover:bg-[#e65100] transition duration-300 disabled:bg-gray-300 disabled:text-gray-600 disabled:cursor-not-allowed"
-              disabled={uploading || submitting}
-            >
-              {uploading ? 'Processing...' : 'Upload Image'}
-            </button>
+            <div className="flex gap-3 flex-wrap justify-center">
+              <button
+                type="button"
+                onClick={() => fileInputRef.current?.click()}
+                className={btnPrimary}
+                disabled={uploading || submitting}
+              >
+                {uploading ? 'Processing...' : '🤖 Scan with OCR'}
+              </button>
+              <button
+                type="button"
+                onClick={() => directUploadInputRef.current?.click()}
+                className={btnSecondary}
+                disabled={uploading || submitting}
+              >
+                {uploading ? 'Processing...' : '📸 Upload Only'}
+              </button>
+            </div>
           </div>
 
           <div className="flex items-center justify-center mb-6">
@@ -880,7 +1443,7 @@ function CreateBillPersonalPageInner() {
                       <option value="">-- เลือก --</option>
                       <option value="__shared__">Shared</option>
                       {selectedParticipants.map((p) => (
-                        <option key={p.userId} value={p.userId}>
+                        <option key={p.localId} value={p.localId}>
                           {p.name}
                         </option>
                       ))}
@@ -912,12 +1475,12 @@ function CreateBillPersonalPageInner() {
 
                     <div className="flex flex-wrap gap-2">
                       {selectedParticipants.map((p) => {
-                        const checked = (it.sharedWith || []).includes(p.userId);
+                        const checked = (it.sharedWith || []).includes(p.localId);
                         return (
                           <button
-                            key={p.userId}
+                            key={p.localId}
                             type="button"
-                            onClick={() => toggleSharedWith(it.id, p.userId)}
+                            onClick={() => toggleSharedWith(it.id, p.localId)}
                             className={`text-xs px-3 py-1 rounded-full border transition ${
                               checked
                                 ? 'border-[#fb8c00] bg-[#fb8c00]/10 text-[#e65100]'
@@ -984,121 +1547,139 @@ function CreateBillPersonalPageInner() {
             <label className="block mb-1 text-sm text-gray-600">Participants</label>
 
             <div className="space-y-3">
-              {participants.map((p, index) => (
-                <div key={index} className="flex gap-2 items-center">
-                  <select
-                    className="flex-1 p-3 border border-gray-300 rounded-lg bg-white text-gray-800 focus:outline-none focus:ring-2 focus:ring-[#fb8c00]"
-                    value={p.userId}
-                    disabled={index === 0}
-                    onChange={(e) => {
-                      const id = e.target.value;
-                      const u = users.find((x) => x._id === id);
-                      setParticipants((prev) =>
-                        prev.map((row, i) =>
-                          i === index
-                            ? { userId: id, name: u?.name || '' }
-                            : row
-                        )
-                      );
-                    }}
-                  >
-                    <option value="">-- เลือกผู้ใช้ --</option>
-                    {users
-                      .filter(
-                        (u) =>
-                          !participants.some(
-                            (x) => x.userId === u._id && x.userId !== p.userId
-                          )
-                      )
-                      .map((u) => (
-                        <option key={u._id} value={u._id}>
-                          {u.name}
-                          {u.email === currentUserEmail ? ' (You)' : ''}
-                        </option>
-                      ))}
-                  </select>
+              {participants.map((p, index) => {
+                const isOwnerRow = Boolean(
+                  index === 0 &&
+                  p.kind === 'user' &&
+                  p.userId &&
+                  users.find((u) => u.email === currentUserEmail)?._id === p.userId
+                );
+                const isGuestSlot = p.kind === 'guest_placeholder' || p.kind === 'guest';
 
-                  <button
-                    type="button"
-                    disabled={index === 0}
-                    onClick={() => handleRemoveParticipant(index)}
-                    className={`px-5 py-2 rounded-lg transition-all duration-200 shadow-sm ${
-                      index === 0
-                        ? 'bg-gray-200 text-gray-400 cursor-not-allowed'
-                        : 'bg-red-500 text-white hover:bg-red-600 hover:scale-105'
-                    }`}
-                  >
-                    🗑
-                  </button>
-                </div>
-              ))}
+                return (
+                  <div key={p.localId} className="flex gap-2 items-center">
+                    {p.kind === 'user' ? (
+                      <select
+                        className="flex-1 p-3 border border-gray-300 rounded-lg bg-white text-gray-800 focus:outline-none focus:ring-2 focus:ring-[#fb8c00]"
+                        value={p.userId ?? ''}
+                        disabled={isOwnerRow}
+                        onChange={(e) => {
+                          const id = e.target.value;
+                          const u = users.find((x) => x._id === id);
+                          setParticipants((prev) =>
+                            prev.map((row) =>
+                              row.localId === p.localId
+                                ? { ...row, userId: id, name: u?.name || '' }
+                                : row
+                            )
+                          );
+                        }}
+                      >
+                        <option value="">-- เลือกผู้ใช้ --</option>
+                        {users
+                          .filter(
+                            (u) =>
+                              !participants.some(
+                                (x) =>
+                                  x.localId !== p.localId &&
+                                  x.kind === 'user' &&
+                                  x.userId === u._id
+                              )
+                          )
+                          .map((u) => (
+                            <option key={u._id} value={u._id}>
+                              {u.name}
+                              {u.email === currentUserEmail ? ' (You)' : ''}
+                            </option>
+                          ))}
+                      </select>
+                    ) : (
+                      <div className="flex-1 p-3 border border-gray-300 rounded-lg bg-gray-50 text-gray-800">
+                        <div className="flex items-center gap-2">
+                          <span className="font-medium">{p.name}</span>
+                          <span className="text-xs px-2 py-0.5 rounded-full bg-gray-200 text-gray-600">
+                            {p.kind === 'guest' ? 'Guest joined' : 'Guest slot'}
+                          </span>
+                        </div>
+                      </div>
+                    )}
+
+                    {isGuestSlot ? (
+                      <button
+                        type="button"
+                        disabled={
+                          p.kind !== 'guest_placeholder' || creatingDraft || creatingInvite || submitting
+                        }
+                        onClick={() => handleCreateInvite(p.localId)}
+                        className={`px-3 py-2 rounded-lg text-sm border ${
+                          p.kind !== 'guest_placeholder' || creatingDraft || creatingInvite || submitting
+                            ? 'border-gray-200 text-gray-400 cursor-not-allowed bg-gray-50'
+                            : copiedInviteLocalId === p.localId
+                              ? 'border-green-300 text-green-700 bg-green-50'
+                              : inviteLinkByLocalId[p.localId]
+                                ? 'border-blue-300 text-blue-700 hover:bg-blue-50'
+                                : 'border-orange-300 text-orange-700 hover:bg-orange-50'
+                        }`}
+                      >
+                        {copiedInviteLocalId === p.localId
+                          ? '✅ คัดลอกแล้ว'
+                          : inviteLinkByLocalId[p.localId]
+                            ? '📋 คัดลอกลิงก์'
+                            : '🔗 เชิญ'}
+                      </button>
+                    ) : null}
+
+                    <button
+                      type="button"
+                      disabled={isOwnerRow}
+                      onClick={() => handleRemoveParticipant(index)}
+                      className={`px-5 py-2 rounded-lg transition-all duration-200 shadow-sm ${
+                        isOwnerRow
+                          ? 'bg-gray-200 text-gray-400 cursor-not-allowed'
+                          : 'bg-red-500 text-white hover:bg-red-600 hover:scale-105'
+                      }`}
+                    >
+                      🗑
+                    </button>
+                  </div>
+                );
+              })}
             </div>
 
-            <button
-              onClick={handleAddParticipant}
-              className="mt-3 text-sm text-[#fb8c00] font-medium hover:text-[#e65100]"
-              type="button"
-            >
-              ➕ เพิ่มผู้เข้าร่วม
-            </button>
+            <div className="mt-3 flex flex-wrap items-center gap-3">
+              <button
+                onClick={handleAddParticipant}
+                className="text-sm text-[#fb8c00] font-medium hover:text-[#e65100]"
+                type="button"
+              >
+                ➕ เพิ่มผู้เข้าร่วม
+              </button>
+
+              <button
+                onClick={handleAddGuestSlot}
+                className="text-sm text-[#fb8c00] font-medium hover:text-[#e65100]"
+                type="button"
+              >
+                ➕ เพิ่ม Guest Slot
+              </button>
+
+              {draftBillId ? (
+                <span className="text-xs px-2 py-1 rounded-full bg-orange-50 text-orange-700 border border-orange-200">
+                  Draft created
+                </span>
+              ) : null}
+            </div>
 
             {isAddParticipantOpen && (
-              <div className="mt-3 rounded-xl border border-gray-200 bg-white p-4">
-                <div className="flex gap-2">
-                  <input
-                    ref={addParticipantInputRef}
-                    type="text"
-                    className="w-full p-3 border border-gray-300 rounded-lg bg-white text-gray-800 placeholder:text-gray-400 focus:outline-none focus:ring-2 focus:ring-[#fb8c00]"
-                    placeholder="ค้นหาชื่อ / email / userId..."
-                    value={addParticipantSearch}
-                    onChange={(e) => setAddParticipantSearch(e.target.value)}
-                  />
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setIsAddParticipantOpen(false);
-                      setAddParticipantSearch('');
-                    }}
-                    className="px-4 rounded-lg border border-gray-300 text-gray-700 hover:bg-gray-50"
-                  >
-                    ปิด
-                  </button>
-                </div>
-
-                <div className="mt-2 max-h-56 overflow-auto">
-                  {addParticipantCandidates.length === 0 ? (
-                    <p className="text-sm text-gray-500 py-3 text-center">
-                      ไม่พบผู้ใช้
-                    </p>
-                  ) : (
-                    <div className="space-y-2">
-                      {addParticipantCandidates.map((u) => (
-                        <button
-                          key={u._id}
-                          type="button"
-                          onClick={() => addParticipantByUser(u)}
-                          className="w-full text-left p-3 rounded-lg border border-gray-200 hover:bg-gray-50 transition"
-                        >
-                          <div className="flex items-center justify-between gap-3">
-                            <div className="min-w-0">
-                              <p className="text-sm font-medium text-gray-800 truncate">
-                                {u.name}{' '}
-                                {u.email === currentUserEmail ? '(You)' : ''}
-                              </p>
-                              <p className="text-xs text-gray-400 truncate">
-                                {u.email}
-                              </p>
-                            </div>
-                            <span className="text-xs font-semibold text-[#fb8c00]">
-                              เพิ่ม
-                            </span>
-                          </div>
-                        </button>
-                      ))}
-                    </div>
-                  )}
-                </div>
-              </div>
+              <AddParticipantDropdown
+                isOpen={isAddParticipantOpen}
+                onClose={() => {
+                  setIsAddParticipantOpen(false);
+                }}
+                onAddParticipant={addParticipantByUser}
+                selectedUserIds={selectedUserIds}
+                currentUserEmail={currentUserEmail}
+              />
             )}
           </div>
 
@@ -1138,7 +1719,7 @@ function CreateBillPersonalPageInner() {
               ) : (
                 <div className="space-y-2">
                   {calc.perParticipant.map((p) => (
-                    <div key={p.userId} className="flex items-center justify-between">
+                    <div key={p.localId} className="flex items-center justify-between">
                       <div className="text-[#4a4a4a]">
                         {p.name} ({calc.total > 0 ? p.percent.toFixed(0) : '0'}%)
                         <div className="text-xs text-gray-500">
@@ -1180,6 +1761,19 @@ function CreateBillPersonalPageInner() {
           </div>
         </div>
       </div>
+
+      {/* ✅ OCR Preview Modal */}
+      <OcrPreviewModal
+        isOpen={ocrPreview.isOpen}
+        title={ocrPreview.previewData.title}
+        items={ocrPreview.previewData.items}
+        total={ocrPreview.previewData.total}
+        imagePreview={ocrPreview.imagePreview}
+        fileName={ocrPreview.selectedFileName}
+        onAccept={onAcceptOcr}
+        onReject={onRejectOcr}
+        isLoading={ocrPreview.isLoading}
+      />
     </div>
   );
 }

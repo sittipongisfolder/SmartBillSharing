@@ -7,6 +7,11 @@ type LineInfo = {
   linkedAt: Date | null; // เวลาที่ผูกสำเร็จ
 };
 
+type FriendRequests = {
+  incoming: string[]; // รหัสผู้ใช้ที่ส่งคำขอมา
+  outgoing: string[]; // รหัสผู้ใช้ที่เราส่งคำขอไป
+};
+
 interface IUser extends Document {
   name: string;
   email: string;
@@ -23,6 +28,10 @@ interface IUser extends Document {
   // ✅ เพิ่มสำหรับ LINE OA
   line?: LineInfo;
   lineNotifyEnabled?: boolean;
+
+  // ✅ Friend System
+  friends?: string[];
+  friendRequests?: FriendRequests;
 }
 
 const userSchema: Schema<IUser> = new Schema(
@@ -68,6 +77,29 @@ const userSchema: Schema<IUser> = new Schema(
 
     // ✅ เปิด/ปิดแจ้งเตือน LINE (ใช้กับ lineNotifyEnabled)
     lineNotifyEnabled: { type: Boolean, default: false },
+
+    // ✅ Friend System
+    friends: [
+      {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: "User",
+      },
+    ],
+
+    friendRequests: {
+      incoming: [
+        {
+          type: mongoose.Schema.Types.ObjectId,
+          ref: "User",
+        },
+      ],
+      outgoing: [
+        {
+          type: mongoose.Schema.Types.ObjectId,
+          ref: "User",
+        },
+      ],
+    },
   },
   { timestamps: true },
 );

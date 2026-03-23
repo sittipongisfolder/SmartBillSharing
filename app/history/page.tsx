@@ -2,9 +2,10 @@
 /* eslint-disable @next/next/no-img-element */
 
 
-import { useEffect, useMemo, useState, Fragment } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, Fragment, Suspense } from 'react';
 import { useSession } from 'next-auth/react';
 import Link from 'next/link';
+import { useSearchParams } from 'next/navigation';
 import {
   ChevronDownIcon,
   PencilSquareIcon,
@@ -26,7 +27,10 @@ interface SlipInfo {
 }
 
 interface Participant {
+  _id: string;
   userId?: string | { _id: string };
+  guestId?: string | { _id: string };
+  kind?: 'user' | 'guest_placeholder' | 'guest';
   name: string;
   amount: number;
   paymentStatus?: PaymentStatus;
@@ -56,6 +60,8 @@ interface Bill {
   items?: BillItem[];
   description?: string;
   billStatus?: PaymentStatus;
+  receiptImageUrl?: string;
+  receiptImagePublicId?: string;
 }
 
 interface UserRow {
@@ -104,27 +110,6 @@ function isBillResponse(x: unknown): x is { bill: Bill } {
   return isObject(x) && 'bill' in x && isObject((x as Record<string, unknown>).bill);
 }
 
-type CreateInviteResponse = {
-  invitePath: string;
-  expiresAt: string;
-  maxUses: number;
-};
-
-type InviteInfo = {
-  url: string;
-  expiresAt: string;
-  maxUses: number;
-};
-
-function isCreateInviteResponse(x: unknown): x is CreateInviteResponse {
-  if (!isObject(x)) return false;
-  const r = x as Record<string, unknown>;
-  return (
-    typeof r.invitePath === 'string' &&
-    typeof r.expiresAt === 'string' &&
-    typeof r.maxUses === 'number'
-  );
-}
 
 
 
@@ -207,12 +192,14 @@ function toEditDraft(bill: Bill): EditDraft {
       items: it.items ?? '',
       price: Number.isFinite(it.price) ? it.price : '',
     })),
-    participants: (bill.participants ?? []).map((p) => ({
-      userId: normalizeId(p.userId) ?? '',
-      name: p.name ?? '',
-      amount: Number.isFinite(p.amount) ? p.amount : '',
-      paymentStatus: normalizeStatus(p.paymentStatus),
-    })),
+    participants: (bill.participants ?? [])
+      .filter((p) => !!normalizeId(p.userId))
+      .map((p) => ({
+        userId: normalizeId(p.userId) ?? '',
+        name: p.name ?? '',
+        amount: Number.isFinite(p.amount) ? p.amount : '',
+        paymentStatus: normalizeStatus(p.paymentStatus),
+      })),
   };
 }
 
@@ -310,6 +297,12 @@ function EditBillModal({
 
   const ownerId = bill ? normalizeId(bill.createdBy) ?? '' : '';
   const isEqualSplit = bill ? String(bill.splitType) === 'equal' : false;
+  const hasGuestParticipants = !!bill?.participants.some(
+    (p) =>
+      p.kind === 'guest' ||
+      p.kind === 'guest_placeholder' ||
+      !!normalizeId(p.guestId)
+  );
   const totalFromItems = draft ? draft.items.reduce((sum, it) => sum + (Number(it.price) || 0), 0) : 0;
   const participantsKey = draft ? draft.participants.map((p) => p.userId).join('|') : '';
 
@@ -331,6 +324,8 @@ function EditBillModal({
   const handleSave = async () => {
     const cleaned = cleanEditDraft(draft, ownerId);
 
+
+
     if (!cleaned.title) return alert('กรุณากรอก Bill Title');
     if (cleaned.items.length === 0) return alert('กรุณาใส่รายการอาหารอย่างน้อย 1 รายการ');
     if (cleaned.participants.length === 0) return alert('กรุณาใส่ผู้ร่วมบิลอย่างน้อย 1 คน');
@@ -349,10 +344,15 @@ function EditBillModal({
         }),
       });
 
-      const data = (await res.json()) as { bill?: Bill; error?: string };
+      const data = (await res.json()) as { bill?: Bill; error?: string; warning?: string };
       if (!res.ok) return alert(data.error || 'แก้ไขไม่สำเร็จ');
 
       if (data.bill) onSaved(data.bill);
+
+      if (data.warning) {
+        alert(data.warning);
+      }
+
       onClose();
     } catch (e) {
       console.error(e);
@@ -446,87 +446,111 @@ function EditBillModal({
           <div className="border rounded-2xl p-4">
             <div className="flex items-center justify-between mb-3">
               <div className="font-semibold text-gray-800">Participants</div>
-              <button
-                type="button"
-                onClick={() => setDraft({ ...draft, participants: [...draft.participants, { userId: '', name: '', amount: '' }] })}
-                className="inline-flex items-center gap-2 px-3 py-2 text-gray-500 rounded-xl bg-gray-100 hover:bg-gray-200 text-sm"
-              >
-                <PlusIcon className="h-4 w-4" /> เพิ่มคน
-              </button>
+
+              {!hasGuestParticipants ? (
+                <button
+                  type="button"
+                  onClick={() =>
+                    setDraft({
+                      ...draft,
+                      participants: [...draft.participants, { userId: '', name: '', amount: '' }],
+                    })
+                  }
+                  className="inline-flex items-center gap-2 px-3 py-2 text-gray-500 rounded-xl bg-gray-100 hover:bg-gray-200 text-sm"
+                >
+                  <PlusIcon className="h-4 w-4" /> เพิ่มคน
+                </button>
+              ) : null}
             </div>
 
-            <div className="space-y-3">
-              {draft.participants.map((p, idx) => (
-                <div key={idx} className="grid grid-cols-12 gap-2 items-center">
-                  <select
-                    value={p.userId}
-                    onChange={(e) => {
-                      const userId = e.target.value;
-                      const u = users.find((x) => x._id === userId);
-                      const next = [...draft.participants];
-                      next[idx] = {
-                        ...next[idx],
-                        userId,
-                        name: u?.name ?? next[idx].name,
-                      };
-                      setDraft({ ...draft, participants: next });
-                    }}
-                    className={`col-span-4 px-3 py-2 border text-gray-500 rounded-xl focus:outline-none focus:ring-2 focus:ring-[#fb8c00] ${p.userId && duplicateUserId(p.userId, idx) ? 'border-red-400' : ''
-                      }`}
-                  >
-                    <option value="">-- เลือกผู้ใช้ --</option>
-                    {users
-                      .filter((u) => !draft.participants.some((pp, i) => i !== idx && pp.userId === u._id))
-                      .map((u) => (
-                        <option key={u._id} value={u._id}>
-                          {u.name} ({u.email})
-                        </option>
-                      ))}
-                  </select>
+            {hasGuestParticipants ? (
+              <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
+                บิลนี้มี guest/guest placeholder อยู่แล้ว ระบบจะอนุญาตให้แก้ได้เฉพาะ
+                ชื่อบิล รายการอาหาร คำอธิบาย และยอดรวม โดยจะไม่แก้รายชื่อผู้ร่วมบิลจากหน้านี้
+                เพื่อป้องกันข้อมูลสลิปและสถานะการจ่ายหาย
+              </div>
+            ) : (
+              <div className="space-y-3">
+                {draft.participants.map((p, idx) => (
+                  <div key={idx} className="grid grid-cols-12 gap-2 items-center">
+                    <select
+                      value={p.userId}
+                      onChange={(e) => {
+                        const userId = e.target.value;
+                        const u = users.find((x) => x._id === userId);
+                        const next = [...draft.participants];
+                        next[idx] = {
+                          ...next[idx],
+                          userId,
+                          name: u?.name ?? next[idx].name,
+                        };
+                        setDraft({ ...draft, participants: next });
+                      }}
+                      className={`col-span-4 px-3 py-2 border text-gray-500 rounded-xl focus:outline-none focus:ring-2 focus:ring-[#fb8c00] ${p.userId && duplicateUserId(p.userId, idx) ? 'border-red-400' : ''
+                        }`}
+                    >
+                      <option value="">-- เลือกผู้ใช้ --</option>
+                      {users
+                        .filter((u) => !draft.participants.some((pp, i) => i !== idx && pp.userId === u._id))
+                        .map((u) => (
+                          <option key={u._id} value={u._id}>
+                            {u.name} ({u.email})
+                          </option>
+                        ))}
+                    </select>
 
-                  <input
-                    value={p.name}
-                    onChange={(e) => {
-                      const next = [...draft.participants];
-                      next[idx] = { ...next[idx], name: e.target.value };
-                      setDraft({ ...draft, participants: next });
-                    }}
-                    placeholder="ชื่อที่แสดง"
-                    className="col-span-4 px-3 py-2 border text-gray-500 rounded-xl focus:outline-none focus:ring-2 focus:ring-[#fb8c00]"
-                  />
+                    <input
+                      value={p.name}
+                      onChange={(e) => {
+                        const next = [...draft.participants];
+                        next[idx] = { ...next[idx], name: e.target.value };
+                        setDraft({ ...draft, participants: next });
+                      }}
+                      placeholder="ชื่อที่แสดง"
+                      className="col-span-4 px-3 py-2 border text-gray-500 rounded-xl focus:outline-none focus:ring-2 focus:ring-[#fb8c00]"
+                    />
 
-                  <input
-                    value={p.amount}
-                    onChange={(e) => {
-                      const raw = e.target.value;
-                      const val = raw === '' ? '' : Number(raw);
-                      const next = [...draft.participants];
-                      next[idx] = { ...next[idx], amount: Number.isFinite(val as number) ? (val as number) : '' };
-                      setDraft({ ...draft, participants: next });
-                    }}
-                    placeholder="ยอดที่ต้องจ่าย"
-                    type="number"
-                    className="col-span-3 px-3 py-2 border text-gray-500 rounded-xl focus:outline-none focus:ring-2 focus:ring-[#fb8c00]"
-                  />
+                    <input
+                      value={p.amount}
+                      onChange={(e) => {
+                        const raw = e.target.value;
+                        const val = raw === '' ? '' : Number(raw);
+                        const next = [...draft.participants];
+                        next[idx] = {
+                          ...next[idx],
+                          amount: Number.isFinite(val as number) ? (val as number) : '',
+                        };
+                        setDraft({ ...draft, participants: next });
+                      }}
+                      placeholder="ยอดที่ต้องจ่าย"
+                      type="number"
+                      className="col-span-3 px-3 py-2 border text-gray-500 rounded-xl focus:outline-none focus:ring-2 focus:ring-[#fb8c00]"
+                    />
 
-                  <button
-                    type="button"
-                    onClick={() => {
-                      const next = draft.participants.filter((_, i) => i !== idx);
-                      setDraft({ ...draft, participants: next.length ? next : [{ userId: '', name: '', amount: '' }] });
-                    }}
-                    className="col-span-1 px-2 py-2 rounded-xl hover:bg-gray-100"
-                    title="ลบคน"
-                  >
-                    <TrashIcon className="h-5 w-5 text-gray-500" />
-                  </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const next = draft.participants.filter((_, i) => i !== idx);
+                        setDraft({
+                          ...draft,
+                          participants: next.length ? next : [{ userId: '', name: '', amount: '' }],
+                        });
+                      }}
+                      className="col-span-1 px-2 py-2 rounded-xl hover:bg-gray-100"
+                      title="ลบคน"
+                    >
+                      <TrashIcon className="h-5 w-5 text-gray-500" />
+                    </button>
 
-                  {p.userId && duplicateUserId(p.userId, idx) ? (
-                    <div className="col-span-12 text-xs text-red-500">* เลือก user ซ้ำ (กรุณาเลือกใหม่)</div>
-                  ) : null}
-                </div>
-              ))}
-            </div>
+                    {p.userId && duplicateUserId(p.userId, idx) ? (
+                      <div className="col-span-12 text-xs text-red-500">
+                        * เลือก user ซ้ำ (กรุณาเลือกใหม่)
+                      </div>
+                    ) : null}
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
 
           <div>
@@ -555,9 +579,12 @@ function EditBillModal({
 
 /** ------------------ Page ------------------ */
 
-export default function HistoryPage() {
+function HistoryPageContent() {
   const { data: session, status: sessionStatus } = useSession();
   const myId = (session?.user as { id?: string } | undefined)?.id;
+  const searchParams = useSearchParams();
+  const targetBillId = searchParams.get('billId')?.trim() ?? '';
+  const handledTargetBillRef = useRef<string | null>(null);
 
   const [activeTab, setActiveTab] = useState<'all' | 'my'>('all');
   const [bills, setBills] = useState<Bill[]>([]);
@@ -589,32 +616,43 @@ export default function HistoryPage() {
     checkedAt?: string;
     verified?: boolean;
   } | null>(null);
-  // ✅ Invite link state
-  const [inviteByBillId, setInviteByBillId] = useState<Record<string, InviteInfo>>({});
-  const [inviteLoadingId, setInviteLoadingId] = useState<string | null>(null);
-  const [inviteErrorByBillId, setInviteErrorByBillId] = useState<Record<string, string>>({});
-  const [copiedBillId, setCopiedBillId] = useState<string | null>(null);
-  useEffect(() => {
-    const fetchBills = async () => {
-      try {
-        setLoading(true);
-        const res = await fetch('/api/bills');
-        if (!res.ok) throw new Error(`Failed to fetch: ${res.status}`);
-        const data: unknown = await res.json();
-        const list = Array.isArray(data) ? (data as Bill[]) : (data as { bills?: Bill[] })?.bills ?? [];
-        setBills(list);
-      } catch (err) {
-        console.error('Error fetching bills:', err);
-        setBills([]);
-      } finally {
-        setLoading(false);
-      }
-    };
 
-    fetchBills();
+  const [receiptModal, setReceiptModal] = useState<{
+    title: string;
+    imageUrl: string;
+  } | null>(null);
+
+  const fetchBills = async (showLoading = true) => {
+    try {
+      if (showLoading) setLoading(true);
+      const res = await fetch('/api/bills');
+      if (!res.ok) throw new Error(`Failed to fetch: ${res.status}`);
+      const data: unknown = await res.json();
+      const list = Array.isArray(data) ? (data as Bill[]) : (data as { bills?: Bill[] })?.bills ?? [];
+      setBills(list);
+    } catch (err) {
+      console.error('Error fetching bills:', err);
+      if (showLoading) setBills([]);
+    } finally {
+      if (showLoading) setLoading(false);
+    }
+  };
+
+  // Initial fetch
+  useEffect(() => {
+    fetchBills(true);
   }, []);
 
-  const ensureBillDetail = async (billId: string) => {
+  // Auto-refresh every 3 seconds
+  useEffect(() => {
+    const interval = setInterval(() => {
+      fetchBills(false);
+    }, 3000);
+
+    return () => clearInterval(interval);
+  }, []);
+
+  const ensureBillDetail = useCallback(async (billId: string) => {
     setDetailLoadingId(billId);
     try {
       const res = await fetch(`/api/bills/${billId}`, { cache: 'no-store' });
@@ -627,61 +665,8 @@ export default function HistoryPage() {
     } finally {
       setDetailLoadingId(null);
     }
-  };
-  const createInviteLink = async (billId: string) => {
-    setInviteLoadingId(billId);
+  }, []);
 
-    // clear error ของบิลนี้
-    setInviteErrorByBillId((prev) => {
-      const next = { ...prev };
-      delete next[billId];
-      return next;
-    });
-
-    try {
-      const res = await fetch(`/api/bills/${billId}/invite`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ expiresInDays: 7, maxUses: 50 }),
-      });
-
-      // พยายามอ่าน json ก่อน (ถ้าไม่ได้ให้เป็น null)
-      const json: unknown = await res.json().catch(() => null);
-
-      if (!res.ok) {
-        const msg =
-          isObject(json) && typeof (json as Record<string, unknown>).error === 'string'
-            ? String((json as Record<string, unknown>).error)
-            : `Create invite failed (${res.status})`;
-        throw new Error(msg);
-      }
-
-      if (!isCreateInviteResponse(json)) {
-        throw new Error('Invalid invite API response shape');
-      }
-
-      const fullUrl = `${window.location.origin}${json.invitePath}`;
-
-      setInviteByBillId((prev) => ({
-        ...prev,
-        [billId]: { url: fullUrl, expiresAt: json.expiresAt, maxUses: json.maxUses },
-      }));
-    } catch (e: unknown) {
-      const msg = e instanceof Error ? e.message : 'Unknown error';
-      setInviteErrorByBillId((prev) => ({ ...prev, [billId]: msg }));
-    } finally {
-      setInviteLoadingId(null);
-    }
-  };
-
-  const copyInviteLink = async (billId: string) => {
-    const info = inviteByBillId[billId];
-    if (!info) return;
-
-    await navigator.clipboard.writeText(info.url);
-    setCopiedBillId(billId);
-    window.setTimeout(() => setCopiedBillId(null), 1200);
-  };
 
   useEffect(() => {
     const fetchUsers = async () => {
@@ -758,6 +743,36 @@ export default function HistoryPage() {
   const totalPages = Math.max(1, Math.ceil(filtered.length / pageSize));
   const paged = filtered.slice((page - 1) * pageSize, page * pageSize);
 
+  useEffect(() => {
+    if (!targetBillId || loading || filtered.length === 0) return;
+
+    const targetIndex = filtered.findIndex((bill) => String(bill._id) === targetBillId);
+    if (targetIndex === -1) return;
+
+    const targetPage = Math.floor(targetIndex / pageSize) + 1;
+    if (page !== targetPage) {
+      setPage(targetPage);
+      return;
+    }
+
+    if (expandedId !== targetBillId) {
+      setExpandedId(targetBillId);
+      if (!detailById[targetBillId] && detailLoadingId !== targetBillId) {
+        void ensureBillDetail(targetBillId);
+      }
+    }
+
+    if (handledTargetBillRef.current === targetBillId) return;
+    handledTargetBillRef.current = targetBillId;
+
+    requestAnimationFrame(() => {
+      document.getElementById(`history-bill-${targetBillId}`)?.scrollIntoView({
+        behavior: 'smooth',
+        block: 'center',
+      });
+    });
+  }, [detailById, detailLoadingId, ensureBillDetail, expandedId, filtered, loading, page, pageSize, targetBillId]);
+
   const handleDelete = async (billId: string) => {
     if (!confirm('ยืนยันลบบิลนี้?')) return;
     try {
@@ -789,7 +804,75 @@ export default function HistoryPage() {
     if (willOpen) await ensureBillDetail(billId);
   };
 
-  if (sessionStatus === 'loading') return <div className="p-6">⏳ กำลังโหลด session...</div>;
+  if (sessionStatus === 'loading') {
+    return (
+      <div className="min-h-screen bg-[radial-gradient(circle_at_top_right,#fff5e6_0%,#ffffff_40%,#fff0e0_100%)]">
+        {/* Top Bar Skeleton */}
+        <div className="sticky top-0 z-10 bg-white border-b">
+          <div className="mx-auto max-w-6xl px-6 h-16 flex items-center justify-between">
+            <div className="h-8 w-32 bg-gray-200 rounded-lg animate-pulse" />
+          </div>
+        </div>
+
+        {/* Content Skeleton */}
+        <div className="max-w-6xl mx-auto px-4 py-6">
+          <div className="flex items-center gap-6 mb-4">
+            <div className="h-6 w-20 bg-gray-200 rounded-lg animate-pulse" />
+            <div className="h-6 w-20 bg-gray-200 rounded-lg animate-pulse" />
+          </div>
+
+          <div className="bg-white rounded-2xl shadow-sm border p-4 mb-4">
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+              <div className="h-10 bg-gray-200 rounded-lg animate-pulse" />
+              <div className="h-10 bg-gray-200 rounded-lg animate-pulse" />
+              <div className="h-10 bg-gray-200 rounded-lg animate-pulse" />
+            </div>
+          </div>
+
+          <div className="bg-white rounded-2xl shadow-sm border overflow-hidden">
+            <div className="overflow-x-auto">
+              <table className="min-w-full">
+                <thead className="bg-gray-50">
+                  <tr>
+                    <th className="px-5 py-4 h-10" />
+                    <th className="px-5 py-4 h-10" />
+                    <th className="px-5 py-4 h-10" />
+                    <th className="px-5 py-4 h-10" />
+                    <th className="px-5 py-4 h-10" />
+                    <th className="px-5 py-4 h-10" />
+                  </tr>
+                </thead>
+                <tbody className="divide-y">
+                  {[...Array(5)].map((_, i) => (
+                    <tr key={i}>
+                      <td className="px-5 py-4">
+                        <div className="h-6 bg-gray-200 rounded animate-pulse" />
+                      </td>
+                      <td className="px-5 py-4">
+                        <div className="h-6 bg-gray-200 rounded animate-pulse" />
+                      </td>
+                      <td className="px-5 py-4">
+                        <div className="h-6 bg-gray-200 rounded animate-pulse" />
+                      </td>
+                      <td className="px-5 py-4">
+                        <div className="h-6 bg-gray-200 rounded animate-pulse" />
+                      </td>
+                      <td className="px-5 py-4">
+                        <div className="h-6 bg-gray-200 rounded animate-pulse" />
+                      </td>
+                      <td className="px-5 py-4">
+                        <div className="h-6 bg-gray-200 rounded animate-pulse" />
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
   if (!session) return <p className="p-4 text-red-500">กรุณาเข้าสู่ระบบเพื่อดูประวัติ</p>;
 
   return (
@@ -797,11 +880,11 @@ export default function HistoryPage() {
       {/* Slip Modal */}
       {slipModal ? (
         <div className="fixed inset-0 z-[60] bg-black/50 flex items-center justify-center p-4">
-          <div className="w-full max-w-2xl bg-white rounded-2xl shadow-xl border overflow-hidden">
-            <div className="flex items-center justify-between px-5 py-4 border-b">
+          <div className="w-full max-w-xl bg-white rounded-2xl shadow-xl border overflow-hidden">
+            <div className="flex items-center justify-between px-4 py-3 border-b">
               <div>
-                <div className="text-lg font-bold text-gray-800">สลิปของ {slipModal.name}</div>
-                <div className="text-xs text-gray-500">
+                <div className="text-base font-bold text-gray-800">สลิปของ {slipModal.name}</div>
+                <div className="text-[11px] text-gray-500">
                   {slipModal.reference ? `ref: ${slipModal.reference}` : ''}
                   {slipModal.checkedAt ? ` • ${formatDateTimeTH(slipModal.checkedAt)}` : ''}
                 </div>
@@ -811,10 +894,10 @@ export default function HistoryPage() {
               </button>
             </div>
 
-            <div className="p-5">
-              <div className="mb-3 flex items-center gap-2">
-                <span className="text-sm text-gray-600">สถานะตรวจสอบ:</span>
-                <span className={`text-sm font-semibold ${slipModal.verified ? 'text-green-700' : 'text-red-600'}`}>
+            <div className="p-4">
+              <div className="mb-2 flex items-center gap-2">
+                <span className="text-xs text-gray-600">สถานะตรวจสอบ:</span>
+                <span className={`text-xs font-semibold ${slipModal.verified ? 'text-green-700' : 'text-red-600'}`}>
                   {slipModal.verified ? 'Verified' : 'Not verified'}
                 </span>
               </div>
@@ -822,17 +905,55 @@ export default function HistoryPage() {
               <div className="rounded-2xl border overflow-hidden bg-gray-50">
                 <img
                   src={slipModal.imageUrl}
-                  alt="slip"
-                  className="w-3/4 h-84 object-center object-contain mx-auto py-1"
+                  alt={`slip-${slipModal.name}`}
+                  className="w-full max-h-[55vh] object-contain"
                 />
               </div>
+
 
               <div className="mt-4 text-right">
                 <a
                   href={slipModal.imageUrl}
                   target="_blank"
                   rel="noreferrer"
-                  className="inline-flex items-center justify-center text-gray-800 px-4 py-2 rounded-xl border bg-white hover:bg-gray-50 text-sm"
+                  className="inline-flex items-center justify-center text-gray-800 px-3 py-1.5 rounded-lg border bg-white hover:bg-gray-50 text-xs"
+                >
+                  เปิดภาพในแท็บใหม่
+                </a>
+              </div>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {receiptModal ? (
+        <div className="fixed inset-0 z-[60] bg-black/50 flex items-center justify-center p-4">
+          <div className="w-full max-w-xl bg-white rounded-2xl shadow-xl border overflow-hidden">
+            <div className="flex items-center justify-between px-4 py-3 border-b">
+              <div>
+                <div className="text-base font-bold text-gray-800">รูปบิล</div>
+                <div className="text-[11px] text-gray-500">{receiptModal.title}</div>
+              </div>
+              <button onClick={() => setReceiptModal(null)} className="p-2 rounded-xl hover:bg-gray-100">
+                <XMarkIcon className="h-5 w-5 text-gray-600" />
+              </button>
+            </div>
+
+            <div className="p-4">
+              <div className="rounded-2xl border overflow-hidden bg-gray-50">
+                <img
+                  src={receiptModal.imageUrl}
+                  alt="receipt"
+                  className="w-full max-h-[55vh] object-contain"
+                />
+              </div>
+
+              <div className="mt-4 text-right">
+                <a
+                  href={receiptModal.imageUrl}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="inline-flex items-center justify-center text-gray-800 px-3 py-1.5 rounded-lg border bg-white hover:bg-gray-50 text-xs"
                 >
                   เปิดภาพในแท็บใหม่
                 </a>
@@ -982,6 +1103,7 @@ export default function HistoryPage() {
                     // ✅ ถ้าเปิดแล้ว ใช้ detail จาก API (จะมี slipInfo ครบกว่า)
                     const detail = detailById[billId] ?? bill;
                     const detailOwnerId = normalizeId(detail.createdBy);
+
                     const detailIsCreator = !!myId && normalizeId(detail.createdBy) === myId;
                     const detailBillStatus = getBillStatus(detail);
 
@@ -992,19 +1114,20 @@ export default function HistoryPage() {
 
                     const slipTargets = (detail.participants ?? []).filter((p) => {
                       const pid = normalizeId(p.userId);
-                      if (!pid) return false;
+                      const gid = normalizeId(p.guestId);
+                      const isOwnerRow = !!detailOwnerId && pid === detailOwnerId;
 
-                      // หัวบิลเห็นทุกคน (ยกเว้น owner)
-                      if (detailIsCreator) return pid !== detailOwnerId;
+                      if (detailIsCreator) {
+                        return !isOwnerRow && (!!pid || !!gid);
+                      }
 
-                      // ลูกบิลเห็นเฉพาะตัวเอง
-                      return !!myId && pid === myId;
+                      return !!myId && !!pid && pid === myId;
                     });
 
 
                     return (
                       <Fragment key={billId}>
-                        <tr className="hover:bg-gray-50 transition">
+                        <tr id={`history-bill-${billId}`} className="hover:bg-gray-50 transition">
                           <td className="px-5 py-4 text-gray-700">{formatDateTimeTH(bill.createdAt)}</td>
                           <td className="px-5 py-4 text-gray-700">{formatMoneyTHB(bill.totalPrice)}</td>
                           <td className="px-5 py-4 font-semibold text-gray-900">
@@ -1114,14 +1237,20 @@ export default function HistoryPage() {
                                     <div className="space-y-2">
                                       {detail.participants.map((p, i) => {
                                         const pid = normalizeId(p.userId);
-                                        const isOwnerRow = detailOwnerId && pid === detailOwnerId;
+                                        const gid = normalizeId(p.guestId);
+                                        const isOwnerRow = !!detailOwnerId && pid === detailOwnerId;
+                                        const isGuestRow = (p.kind === 'guest' || p.kind === 'guest_placeholder' || (!!gid && !pid)) && !isOwnerRow;
+
                                         const ps = normalizeStatus(p.paymentStatus) ?? 'unpaid';
 
                                         return (
-                                          <div key={`${pid ?? 'x'}-${i}`} className="flex items-center justify-between text-sm">
+                                          <div key={`${pid ?? gid ?? 'guest'}-${i}`} className="flex items-center justify-between text-sm">
                                             <div className="text-gray-800">
                                               {p.name}
                                               {isOwnerRow ? <span className="text-xs text-gray-400"> (Owner)</span> : null}
+                                              {!isOwnerRow && isGuestRow ? (
+                                                <span className="text-xs text-gray-400"> (Guest)</span>
+                                              ) : null}
                                             </div>
 
                                             <div className="flex items-center gap-2">
@@ -1133,61 +1262,31 @@ export default function HistoryPage() {
                                       })}
                                     </div>
                                   </div>
-                                  {/* ✅ Invite link (เฉพาะเจ้าของบิล) */}
-                                  {detailIsCreator ? (
+
+                                  {/* ✅ Receipt Image Display */}
+                                  {detail.receiptImageUrl ? (
                                     <div className="bg-white rounded-2xl border p-4 md:col-span-2">
-                                      <div className="flex items-start justify-between gap-3">
-                                        <div>
-                                          <div className="font-semibold text-gray-800">ลิงก์เชิญเพื่อน (Guest)</div>
-                                          <div className="text-xs text-gray-500">
-                                            ส่งลิงก์นี้ให้เพื่อนเข้าร่วมบิลได้โดยไม่ต้องสมัคร
-                                          </div>
-                                        </div>
+                                      <div className="flex items-center justify-between">
+                                        <div className="font-semibold text-gray-800">รูปบิล</div>
 
                                         <button
                                           type="button"
-                                          onClick={() => void createInviteLink(billId)}
-                                          disabled={inviteLoadingId === billId}
-                                          className="px-4 py-2 rounded-xl bg-[#fb8c00] text-white font-semibold hover:bg-[#e65100] disabled:opacity-60"
+                                          onClick={() =>
+                                            setReceiptModal({
+                                              title: detail.title,
+                                              imageUrl: detail.receiptImageUrl!,
+                                            })
+                                          }
+                                          className="px-3 py-2 rounded-xl border text-gray-900 bg-white hover:bg-gray-50 text-sm"
                                         >
-                                          {inviteLoadingId === billId ? 'กำลังสร้าง...' : 'สร้างลิงก์'}
+                                          ดูบิล
                                         </button>
                                       </div>
-
-                                      {inviteErrorByBillId[billId] ? (
-                                        <div className="mt-3 rounded-xl bg-red-50 px-4 py-3 text-sm text-red-700">
-                                          {inviteErrorByBillId[billId]}
-                                        </div>
-                                      ) : null}
-
-                                      {inviteByBillId[billId] ? (
-                                        <div className="mt-3 rounded-xl bg-[#f5f5f5] p-4">
-                                          <div className="text-xs text-gray-500">Invite link</div>
-                                          <div className="mt-1 break-all text-sm font-semibold text-gray-900">
-                                            {inviteByBillId[billId].url}
-                                          </div>
-
-                                          <div className="mt-3 flex flex-wrap items-center gap-2">
-                                            <button
-                                              type="button"
-                                              onClick={() => void copyInviteLink(billId)}
-                                              className="px-3 py-2 rounded-xl border text-gray-900 bg-white hover:bg-gray-50 text-sm"
-                                            >
-                                              {copiedBillId === billId ? 'คัดลอกแล้ว' : 'คัดลอกลิงก์'}
-                                            </button>
-
-                                            <span className="text-xs text-gray-500">
-                                              หมดอายุ: {new Date(inviteByBillId[billId].expiresAt).toLocaleString('th-TH')}
-                                            </span>
-
-                                            <span className="text-xs text-gray-500">
-                                              ใช้ได้สูงสุด: {inviteByBillId[billId].maxUses} ครั้ง
-                                            </span>
-                                          </div>
-                                        </div>
-                                      ) : null}
                                     </div>
                                   ) : null}
+
+                                  {/* ✅ Invite link (เฉพาะเจ้าของบิล) */}
+
 
                                   {/* ✅ ส่วนดูสลิป (หัวบิลเห็นทุกคน / ลูกบิลเห็นของตัวเอง) */}
                                   {canViewSlipSection ? (
@@ -1321,5 +1420,13 @@ export default function HistoryPage() {
         </p>
       </div>
     </div>
+  );
+}
+
+export default function HistoryPage() {
+  return (
+    <Suspense fallback={<div className="min-h-screen bg-[radial-gradient(circle_at_top_right,#fff5e6_0%,#ffffff_40%,#fff0e0_100%)]" />}>
+      <HistoryPageContent />
+    </Suspense>
   );
 }

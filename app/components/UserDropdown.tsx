@@ -10,6 +10,7 @@ import {
   UserIcon,
   ReceiptPercentIcon,
   LinkIcon,
+  UserGroupIcon,
 } from '@heroicons/react/24/outline';
 import { useSession, signOut } from 'next-auth/react';
 import Link from 'next/link';
@@ -130,6 +131,16 @@ function UserMenuBody({
                 >
                   <ClockIcon className="h-5 w-5 mr-3 text-gray-500" />
                   ดูประวัติการใช้งาน
+                </Link>
+              </Menu.Item>
+
+              <Menu.Item as={Fragment}>
+                <Link
+                  href="/friends"
+                  className="flex items-center px-4 py-3 text-sm font-medium text-gray-700 hover:bg-gray-100 hover:text-gray-900 transition"
+                >
+                  <UserGroupIcon className="h-5 w-5 mr-3 text-blue-500" />
+                  คำขอเป็นเพื่อน
                 </Link>
               </Menu.Item>
 

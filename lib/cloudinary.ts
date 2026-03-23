@@ -26,6 +26,24 @@ export function uploadSlipBuffer(buffer: Buffer, opts?: { folder?: string; publi
   });
 }
 
+export function uploadBillReceiptBuffer(buffer: Buffer, opts?: { folder?: string; publicId?: string }) {
+  return new Promise<{ secure_url: string; public_id: string }>((resolve, reject) => {
+    cloudinary.uploader
+      .upload_stream(
+        {
+          folder: opts?.folder ?? "smart-bill/receipts",
+          public_id: opts?.publicId,
+          resource_type: "image",
+        },
+        (err, result) => {
+          if (err || !result) return reject(err);
+          resolve({ secure_url: result.secure_url, public_id: result.public_id });
+        }
+      )
+      .end(buffer);
+  });
+}
+
 export async function deleteByPublicId(publicId?: string) {
   if (!publicId) return;
   try {

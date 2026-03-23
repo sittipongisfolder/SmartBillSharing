@@ -2,11 +2,11 @@
 
 import React, { useState } from 'react';
 import { signIn } from 'next-auth/react';
-import { useRouter } from 'next/navigation';
+import { useRouter, useSearchParams } from 'next/navigation';
 import Link from 'next/link';
 import { FaEye, FaEyeSlash } from 'react-icons/fa';
 
-export default function Login() {
+function LoginContent() {
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
@@ -14,6 +14,13 @@ export default function Login() {
   const [loading, setLoading] = useState(false);
 
   const router = useRouter();
+  const searchParams = useSearchParams();
+
+  const rawCallbackUrl = searchParams.get('callbackUrl');
+  const callbackPath =
+    rawCallbackUrl && rawCallbackUrl.startsWith('/') && !rawCallbackUrl.startsWith('//')
+      ? rawCallbackUrl
+      : null;
 
   const handleLoginSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
@@ -38,8 +45,11 @@ export default function Login() {
       const sessionRes = await fetch('/api/auth/session');
       const sessionData: { user?: { role?: string } } = await sessionRes.json();
       
-      // ถ้าเป็น admin ให้ไปหน้า admin dashboard ถ้าไม่เป็น ให้ไปหน้าปกติ
-      if (sessionData?.user?.role === 'admin') {
+      // ถ้ามี callbackUrl ให้กลับไปปลายทางเดิมก่อน
+      if (callbackPath) {
+        router.push(callbackPath);
+      } else if (sessionData?.user?.role === 'admin') {
+        // ถ้าเป็น admin ให้ไปหน้า admin dashboard ถ้าไม่เป็น ให้ไปหน้าปกติ
         router.push('/admin');
       } else {
         router.push('/dashboard');
@@ -168,5 +178,15 @@ export default function Login() {
         </div>
       </div>
     </div>
+  );
+}
+
+export default function LoginPage() {
+  return (
+    <React.Suspense
+      fallback={<div className="min-h-screen bg-[radial-gradient(circle_at_top_right,#fff5e6_0%,#ffffff_40%,#fff0e0_100%)]" />}
+    >
+      <LoginContent />
+    </React.Suspense>
   );
 }
