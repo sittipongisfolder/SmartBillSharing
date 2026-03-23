@@ -14,6 +14,7 @@ export default function AppHeaderActions() {
   const isGuestPage =
     pathname.startsWith('/guest/access/') ||
     pathname.startsWith('/guest/bills/') ||
+    pathname.startsWith('/i/') ||
     hasGuestAccessToken;
 
   if (isGuestPage) return null;
