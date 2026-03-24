@@ -8,21 +8,30 @@ type Props = {
   billId: string;
   billStage: 'draft' | 'active';
   myStatus: 'unpaid' | 'pending' | 'paid';
+  inviteToken?: string;
 };
 
 export default function GuestAccessClient({
   rawToken,
   billStage,
   myStatus,
+  inviteToken,
 }: Props) {
   const router = useRouter();
   const [copied, setCopied] = useState(false);
 
   // ✅ ถ้าหน้า pay เดิมของคุณจะรองรับ guest token
- const payUrl = useMemo(
-  () => `/guest/access/${encodeURIComponent(rawToken)}/pay`,
-  [rawToken]
-);
+  const payUrl = useMemo(() => {
+    const base = `/guest/access/${encodeURIComponent(rawToken)}/pay`;
+    if (!inviteToken) return base;
+    return `${base}?inviteToken=${encodeURIComponent(inviteToken)}`;
+  }, [inviteToken, rawToken]);
+
+  const stableEntryUrl = useMemo(() => {
+    if (typeof window === 'undefined') return '';
+    if (!inviteToken) return window.location.href;
+    return `${window.location.origin}/i/${encodeURIComponent(inviteToken)}`;
+  }, [inviteToken]);
 
   // ✅ draft -> refresh อัตโนมัติ
   useEffect(() => {
@@ -48,7 +57,8 @@ export default function GuestAccessClient({
 
   const handleCopyLink = async () => {
     try {
-      await navigator.clipboard.writeText(window.location.href);
+      const target = stableEntryUrl || window.location.href;
+      await navigator.clipboard.writeText(target);
       setCopied(true);
       window.setTimeout(() => setCopied(false), 1500);
     } catch {

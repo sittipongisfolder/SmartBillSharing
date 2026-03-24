@@ -128,12 +128,12 @@ export default function Dashboard() {
                     <div className="text-base font-semibold">{title}</div>
                     <p className="mt-2 text-sm leading-relaxed text-[#6b7280]">{desc}</p>
 
-                    <div className="mt-4 inline-flex items-center gap-2 text-sm font-medium text-[#fb8c00]">
+                    {/* <div className="mt-4 inline-flex items-center gap-2 text-sm font-medium text-[#fb8c00]">
                       วิธีการใช้งาน
                       <span className="inline-flex h-5 w-5 items-center justify-center rounded-full bg-[#fb8c00]/10">
                         <span className="text-xs">i</span>
                       </span>
-                    </div>
+                    </div> */}
                   </div>
                 </button>
               );

@@ -28,11 +28,15 @@ function idToString(v: unknown): string {
 
 export default async function GuestAccessPage({
   params,
+  searchParams,
 }: {
   params: Promise<{ token: string }>;
+  searchParams: Promise<{ inviteToken?: string }>;
 }) {
   const { token: rawTokenParam } = await params;
+  const { inviteToken } = await searchParams;
   const rawToken = String(rawTokenParam ?? '').trim();
+  const rawInviteToken = String(inviteToken ?? '').trim();
 
   if (!rawToken) notFound();
 
@@ -131,6 +135,7 @@ export default async function GuestAccessPage({
           billId={billId}
           billStage={billStage}
           myStatus={myStatus}
+          inviteToken={rawInviteToken || undefined}
         />
       </div>
     </div>

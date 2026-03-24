@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState, useCallback } from 'react';
 import Link from 'next/link';
+import { useRouter } from 'next/navigation';
 import { BellIcon, CheckIcon, TrashIcon } from '@heroicons/react/24/outline';
 
 type NotificationType =
@@ -53,6 +54,7 @@ function dispatchPopoverOpen(id: PopoverOpenDetail['id']) {
 }
 
 export default function NotificationBell() {
+  const router = useRouter();
   const [open, setOpen] = useState(false);
   const [tab, setTab] = useState<'unread' | 'all'>('unread');
   const [items, setItems] = useState<NotificationItem[]>([]);
@@ -202,7 +204,7 @@ export default function NotificationBell() {
       {open && (
         <div className="fixed inset-x-2 top-16 sm:absolute sm:inset-x-auto sm:top-auto sm:right-0 mt-0 sm:mt-2 w-auto sm:w-[360px] rounded-2xl border border-black/10 bg-white shadow-[0_18px_50px_rgba(0,0,0,0.12)] overflow-hidden z-50">
           <div className="px-4 py-3 border-b border-black/5 flex items-center justify-between">
-            <div className="font-semibold text-gray-900">Notifications</div>
+            <div className="font-semibold text-gray-900">แจ้งเตือน</div>
             <div className="text-xs text-gray-500">{headerTitle}</div>
           </div>
 
@@ -215,7 +217,7 @@ export default function NotificationBell() {
                 tab === 'unread' ? 'bg-orange-50 text-[#e65100]' : 'text-gray-600 hover:bg-gray-50',
               ].join(' ')}
             >
-              Unread
+              ยังไม่อ่าน
             </button>
             <button
               type="button"
@@ -225,7 +227,7 @@ export default function NotificationBell() {
                 tab === 'all' ? 'bg-orange-50 text-[#e65100]' : 'text-gray-600 hover:bg-gray-50',
               ].join(' ')}
             >
-              All
+              ทั้งหมด
             </button>
 
             <div className="ml-auto flex gap-2">
@@ -235,7 +237,7 @@ export default function NotificationBell() {
                 className="h-9 px-3 rounded-xl text-sm font-semibold text-gray-700 hover:bg-gray-50 flex items-center gap-2"
               >
                 <CheckIcon className="h-4 w-4" />
-                Mark as read
+                อ่านแล้ว
               </button>
               <button
                 type="button"
@@ -243,7 +245,7 @@ export default function NotificationBell() {
                 className="h-9 px-3 rounded-xl text-sm font-semibold text-gray-700 hover:bg-gray-50 flex items-center gap-2"
               >
                 <TrashIcon className="h-4 w-4" />
-                Clear all
+                ลบทั้งหมด
               </button>
             </div>
           </div>
@@ -314,13 +316,13 @@ export default function NotificationBell() {
                               </span>
                             )
                           ) : n.href ? (
-                            <Link
-                              href={n.href}
+                            <button
+                              type="button"
                               className="text-sm font-semibold text-[#fb8c00] hover:text-[#e65100]"
-                              onClick={() => setOpen(false)}
+                              onClick={() => { setOpen(false); router.push(n.href!); }}
                             >
                               ไปยังบิลนี้
-                            </Link>
+                            </button>
                           ) : (
                             <span className="text-xs text-gray-400">—</span>
                           )}
@@ -331,7 +333,7 @@ export default function NotificationBell() {
                               onClick={() => markOneRead(n._id)}
                               className="ml-auto text-xs font-semibold text-gray-600 hover:text-gray-900"
                             >
-                              Mark read
+                              ทำเครื่องหมายว่าอ่านแล้ว
                             </button>
                           )}
                         </div>
@@ -345,7 +347,7 @@ export default function NotificationBell() {
 
           <div className="px-4 py-3 border-t border-black/5 text-right">
             <Link   href="/settings?tab=notifications" className="text-sm font-semibold text-[#fb8c00] hover:text-[#e65100]">
-              Notification settings
+              กำหนดค่าแจ้งเตือน
             </Link>
           </div>
         </div>

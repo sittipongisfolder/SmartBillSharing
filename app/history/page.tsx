@@ -2,7 +2,7 @@
 /* eslint-disable @next/next/no-img-element */
 
 
-import { useCallback, useEffect, useMemo, useRef, useState, Fragment, Suspense } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, Fragment } from 'react';
 import { useSession } from 'next-auth/react';
 import Link from 'next/link';
 import { useSearchParams } from 'next/navigation';
@@ -149,7 +149,7 @@ function getMyShare(bill: Bill, myId?: string): number | null {
 }
 
 function StatusBadge({ status }: { status: PaymentStatus }) {
-  const label = status === 'paid' ? 'Paid' : status === 'pending' ? 'Pending' : 'Unpaid';
+  const label = status === 'paid' ? 'จ่ายแล้ว' : status === 'pending' ? 'รอดำเนินการ' : 'ยังไม่จ่าย';
   const cls =
     status === 'paid'
       ? 'bg-green-50 text-green-700 border-green-200'
@@ -579,7 +579,7 @@ function EditBillModal({
 
 /** ------------------ Page ------------------ */
 
-function HistoryPageContent() {
+export default function HistoryPage() {
   const { data: session, status: sessionStatus } = useSession();
   const myId = (session?.user as { id?: string } | undefined)?.id;
   const searchParams = useSearchParams();
@@ -607,6 +607,8 @@ function HistoryPageContent() {
   // ✅ Bill detail cache (เอาไว้ดู slipInfo)
   const [detailById, setDetailById] = useState<Record<string, Bill>>({});
   const [detailLoadingId, setDetailLoadingId] = useState<string | null>(null);
+  const [inviteLinkByParticipantKey, setInviteLinkByParticipantKey] = useState<Record<string, string>>({});
+  const [copiedInviteParticipantKey, setCopiedInviteParticipantKey] = useState<string | null>(null);
 
   // ✅ Slip modal
   const [slipModal, setSlipModal] = useState<{
@@ -796,6 +798,44 @@ function HistoryPageContent() {
   const onSaved = (updated: Bill) => {
     setBills((prev) => prev.map((b) => (b._id === updated._id ? updated : b)));
     setDetailById((prev) => ({ ...prev, [updated._id]: updated })); // กันข้อมูล detail เก่า
+  };
+
+  const handleCopyGuestInviteLink = async (billId: string, participantId: string) => {
+    const key = `${billId}:${participantId}`;
+
+    try {
+      let fullUrl = inviteLinkByParticipantKey[key];
+
+      if (!fullUrl) {
+        const res = await fetch(
+          `/api/bills/${encodeURIComponent(billId)}/invite?participantId=${encodeURIComponent(participantId)}`,
+          { cache: 'no-store' }
+        );
+
+        const data = (await res.json().catch(() => null)) as
+          | { invitePath?: string; error?: string }
+          | null;
+
+        if (!res.ok || !data?.invitePath) {
+          throw new Error(data?.error || 'ไม่พบลิงก์เชิญของ guest คนนี้');
+        }
+
+        fullUrl = `${window.location.origin}${data.invitePath}`;
+        setInviteLinkByParticipantKey((prev) => ({
+          ...prev,
+          [key]: fullUrl,
+        }));
+      }
+
+      await navigator.clipboard.writeText(fullUrl);
+      setCopiedInviteParticipantKey(key);
+      window.setTimeout(() => {
+        setCopiedInviteParticipantKey((prev) => (prev === key ? null : prev));
+      }, 1500);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'คัดลอกลิงก์ไม่สำเร็จ';
+      alert(message);
+    }
   };
 
   const toggleExpanded = async (billId: string) => {
@@ -992,7 +1032,7 @@ function HistoryPageContent() {
             className={`pb-2 text-sm font-semibold ${activeTab === 'all' ? 'text-[#fb8c00] border-b-2 border-[#fb8c00]' : 'text-gray-500 hover:text-gray-700'
               }`}
           >
-            All Bills
+            บิลทั้งหมด
           </button>
           <button
             type="button"
@@ -1000,7 +1040,7 @@ function HistoryPageContent() {
             className={`pb-2 text-sm font-semibold ${activeTab === 'my' ? 'text-[#fb8c00] border-b-2 border-[#fb8c00]' : 'text-gray-500 hover:text-gray-700'
               }`}
           >
-            My Bills
+            บิลของฉัน
           </button>
         </div>
 
@@ -1011,7 +1051,7 @@ function HistoryPageContent() {
               <input
                 value={q}
                 onChange={(e) => setQ(e.target.value)}
-                placeholder="Search by amount, group..."
+                placeholder="ค้นหาตามจำนวน, กลุ่ม..."
                 className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#fb8c00] placeholder-gray-500 text-sm text-gray-800"
               />
             </div>
@@ -1022,10 +1062,10 @@ function HistoryPageContent() {
                 onChange={(e) => setDateFilter(e.target.value as typeof dateFilter)}
                 className="w-full rounded-xl border px-4 py-3 text-sm text-gray-800 border-gray-300 outline-none focus:ring-2 focus:ring-[#fb8c00] appearance-none"
               >
-                <option value="all">Filter by Date (All)</option>
-                <option value="7d">Last 7 days</option>
-                <option value="30d">Last 30 days</option>
-                <option value="year">This year</option>
+                <option value="all">กรองตามวันที่ (ทั้งหมด)</option>
+                <option value="7d">7 วันที่ผ่านมา</option>
+                <option value="30d">30 วันที่ผ่านมา</option>
+                <option value="year">ปีนี้</option>
               </select>
               <ChevronDownIcon className="h-4 w-4 text-gray-400 absolute right-4 top-1/2 -translate-y-1/2 pointer-events-none" />
             </div>
@@ -1036,10 +1076,10 @@ function HistoryPageContent() {
                 onChange={(e) => setStatusFilter(e.target.value as typeof statusFilter)}
                 className="w-full rounded-xl border px-4 py-3 text-sm text-gray-800 border-gray-300 outline-none focus:ring-2 focus:ring-[#fb8c00] appearance-none"
               >
-                <option value="all">Filter by Status (All)</option>
-                <option value="unpaid">Unpaid</option>
-                <option value="pending">Pending</option>
-                <option value="paid">Paid</option>
+                <option value="all">กรองตามสถานะ (ทั้งหมด)</option>
+                <option value="unpaid">ยังไม่จ่าย</option>
+                <option value="pending">กำลังรอตรวจสอบ</option>
+                <option value="paid">จ่ายแล้ว</option>
               </select>
               <ChevronDownIcon className="h-4 w-4 text-gray-400 absolute right-4 top-1/2 -translate-y-1/2 pointer-events-none" />
             </div>
@@ -1052,12 +1092,12 @@ function HistoryPageContent() {
             <table className="min-w-full text-sm">
               <thead className="bg-gray-50 text-gray-600">
                 <tr>
-                  <th className="text-left px-5 py-4 font-semibold">Date</th>
-                  <th className="text-left px-5 py-4 font-semibold">Total Amount</th>
-                  <th className="text-left px-5 py-4 font-semibold">Your Share</th>
-                  <th className="text-left px-5 py-4 font-semibold">Biller</th>
-                  <th className="text-left px-5 py-4 font-semibold">Status</th>
-                  <th className="text-right px-5 py-4 font-semibold">Actions</th>
+                  <th className="text-left px-5 py-4 font-semibold">วันที่</th>
+                  <th className="text-left px-5 py-4 font-semibold">ยอดรวม</th>
+                  <th className="text-left px-5 py-4 font-semibold">ยอดของคุณ</th>
+                  <th className="text-left px-5 py-4 font-semibold">ผู้สร้างบิล</th>
+                  <th className="text-left px-5 py-4 font-semibold">สถานะ</th>
+                  <th className="text-right px-5 py-4 font-semibold">การแก้ไข/ดูรายละเอียด</th>
                 </tr>
               </thead>
 
@@ -1085,7 +1125,7 @@ function HistoryPageContent() {
                     const me = getMyParticipant(bill, myId);
                     const isParticipant = !!me;
 
-                    const billerName = myId && createdById === myId ? 'You' : createdByObj?.name ?? 'Unknown';
+                    const billerName = myId && createdById === myId ? 'คุณ' : createdByObj?.name ?? 'Unknown';
                     const myShare = getMyShare(bill, myId);
 
                     const myStatus = getMyStatus(bill, myId);
@@ -1151,9 +1191,9 @@ function HistoryPageContent() {
                           <td className="px-5 py-4">
                             <StatusBadge status={statusToShow} />
                             {isCreator ? (
-                              <div className="text-[11px] text-gray-400 mt-1">Bill Status</div>
+                              <div className="text-[11px] text-gray-400 mt-1">สถานะบิล</div>
                             ) : (
-                              <div className="text-[11px] text-gray-400 mt-1">My Status</div>
+                              <div className="text-[11px] text-gray-400 mt-1">สถานะของฉัน</div>
                             )}
                           </td>
 
@@ -1164,7 +1204,7 @@ function HistoryPageContent() {
                                   href={`/bills/${bill._id}/pay`}
                                   className="inline-flex items-center justify-center px-4 py-2 rounded-xl bg-[#fb8c00] text-white font-semibold hover:bg-[#e65100] transition"
                                 >
-                                  Pay Now
+                                  ชำระตอนนี้
                                 </Link>
                               ) : null}
 
@@ -1174,7 +1214,7 @@ function HistoryPageContent() {
                                     type="button"
                                     onClick={() => openEdit(bill)}
                                     className="p-2 rounded-xl hover:bg-gray-100 transition"
-                                    title="Edit"
+                                    title="แก้ไข"
                                   >
                                     <PencilSquareIcon className="h-5 w-5 text-gray-600" />
                                   </button>
@@ -1183,7 +1223,7 @@ function HistoryPageContent() {
                                     type="button"
                                     onClick={() => handleDelete(bill._id)}
                                     className="p-2 rounded-xl hover:bg-gray-100 transition"
-                                    title="Delete"
+                                    title="ลบ"
                                   >
                                     <TrashIcon className="h-5 w-5 text-gray-600" />
                                   </button>
@@ -1194,7 +1234,7 @@ function HistoryPageContent() {
                                 type="button"
                                 onClick={() => void toggleExpanded(billId)}
                                 className="p-2 rounded-xl hover:bg-gray-100 transition"
-                                title="Details"
+                                title="รายละเอียด"
                               >
                                 <ChevronDownIcon className={`h-5 w-5 text-gray-600 transition ${open ? 'rotate-180' : ''}`} />
                               </button>
@@ -1216,17 +1256,17 @@ function HistoryPageContent() {
                                     </div>
                                     <div className="mt-2 text-sm text-gray-700 space-y-1">
                                       <div>
-                                        <span className="text-gray-500">Title:</span> {detail.title}
+                                        <span className="text-gray-500">ชื่อบิล:</span> {detail.title}
                                       </div>
                                       <div>
-                                        <span className="text-gray-500">Split:</span> {String(detail.splitType)}
+                                        <span className="text-gray-500">ประเภทการแบ่ง:</span> {String(detail.splitType)}
                                       </div>
                                       <div>
-                                        <span className="text-gray-500">Total:</span> {formatMoneyTHB(detail.totalPrice)}
+                                        <span className="text-gray-500">ยอดรวม:</span> {formatMoneyTHB(detail.totalPrice)}
                                       </div>
                                       {detail.description ? (
                                         <div>
-                                          <span className="text-gray-500">Desc:</span> {detail.description}
+                                          <span className="text-gray-500">คำอธิบาย:</span> {detail.description}
                                         </div>
                                       ) : null}
                                     </div>
@@ -1238,18 +1278,32 @@ function HistoryPageContent() {
                                       {detail.participants.map((p, i) => {
                                         const pid = normalizeId(p.userId);
                                         const gid = normalizeId(p.guestId);
+                                        const participantId = normalizeId(p._id);
                                         const isOwnerRow = !!detailOwnerId && pid === detailOwnerId;
                                         const isGuestRow = (p.kind === 'guest' || p.kind === 'guest_placeholder' || (!!gid && !pid)) && !isOwnerRow;
+                                        const inviteKey = participantId ? `${billId}:${participantId}` : '';
 
                                         const ps = normalizeStatus(p.paymentStatus) ?? 'unpaid';
 
                                         return (
                                           <div key={`${pid ?? gid ?? 'guest'}-${i}`} className="flex items-center justify-between text-sm">
-                                            <div className="text-gray-800">
-                                              {p.name}
-                                              {isOwnerRow ? <span className="text-xs text-gray-400"> (Owner)</span> : null}
+                                            <div className="text-gray-800 flex items-center gap-2 flex-wrap">
+                                              <span>{p.name}</span>
+                                              {isOwnerRow ? <span className="text-xs text-gray-400"> (เจ้าของบิล)</span> : null}
                                               {!isOwnerRow && isGuestRow ? (
-                                                <span className="text-xs text-gray-400"> (Guest)</span>
+                                                <span className="text-xs text-gray-400"> (ผู้ร่วมบิล)</span>
+                                              ) : null}
+                                              {detailIsCreator && isGuestRow && participantId ? (
+                                                <button
+                                                  type="button"
+                                                  onClick={() => void handleCopyGuestInviteLink(billId, participantId)}
+                                                  className={`rounded-lg border px-2 py-1 text-xs transition ${copiedInviteParticipantKey === inviteKey
+                                                      ? 'border-green-300 bg-green-50 text-green-700'
+                                                      : 'border-blue-200 bg-blue-50 text-blue-700 hover:bg-blue-100'
+                                                    }`}
+                                                >
+                                                  {copiedInviteParticipantKey === inviteKey ? 'คัดลอกแล้ว' : 'คัดลอกลิงก์'}
+                                                </button>
                                               ) : null}
                                             </div>
 
@@ -1320,7 +1374,7 @@ function HistoryPageContent() {
 
                                                 <div className="flex items-center gap-2">
                                                   <span className={`text-xs font-semibold ${slip?.verified ? 'text-green-700' : 'text-gray-500'}`}>
-                                                    {hasSlip ? (slip?.verified ? 'Verified' : 'Uploaded') : 'No Slip'}
+                                                    {hasSlip ? (slip?.verified ? 'ยืนยันแล้ว' : 'อัปโหลดแล้ว') : 'ยังไม่มีสลิป'}
                                                   </span>
 
                                                   {hasSlip ? (
@@ -1420,13 +1474,5 @@ function HistoryPageContent() {
         </p>
       </div>
     </div>
-  );
-}
-
-export default function HistoryPage() {
-  return (
-    <Suspense fallback={<div className="min-h-screen bg-[radial-gradient(circle_at_top_right,#fff5e6_0%,#ffffff_40%,#fff0e0_100%)]" />}>
-      <HistoryPageContent />
-    </Suspense>
   );
 }

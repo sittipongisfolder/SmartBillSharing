@@ -90,7 +90,7 @@ function SettingsPageInner() {
 
             {/* Settings menu */}
             <div className="bg-white rounded-2xl border border-black/5 shadow-sm p-3">
-              <div className="px-3 py-2 text-sm font-semibold text-gray-700">Settings</div>
+              <div className="px-3 py-2 text-sm font-semibold text-gray-700">การตั้งค่า</div>
 
               <MenuItem
                 active={tab === 'password'}
@@ -219,12 +219,12 @@ function ChangePasswordCard() {
 
   return (
     <div>
-      <div className="font-semibold text-gray-900">Change Password</div>
+      <div className="font-semibold text-gray-900">เปลี่ยนรหัสผ่าน</div>
       <p className="text-sm text-gray-500 mt-1">เพื่อความปลอดภัย กรุณาใส่รหัสผ่านเดิมก่อนตั้งรหัสใหม่</p>
 
       <form onSubmit={onSubmit} className="mt-5 space-y-4 max-w-xl">
         <div className="space-y-2">
-          <label className="text-sm font-semibold text-gray-700 ml-1">Current Password</label>
+          <label className="text-sm font-semibold text-gray-700 ml-1">รหัสผ่านปัจจุบัน</label>
           <input
             type="password"
             className={inputClass}
@@ -235,7 +235,7 @@ function ChangePasswordCard() {
         </div>
 
         <div className="space-y-2">
-          <label className="text-sm font-semibold text-gray-700 ml-1">New Password</label>
+          <label className="text-sm font-semibold text-gray-700 ml-1">รหัสผ่านใหม่</label>
           <input
             type="password"
             className={inputClass}
@@ -246,7 +246,7 @@ function ChangePasswordCard() {
         </div>
 
         <div className="space-y-2">
-          <label className="text-sm font-semibold text-gray-900 ml-1">Confirm New Password</label>
+          <label className="text-sm font-semibold text-gray-700 ml-1">ยืนยันรหัสผ่านใหม่</label>
           <input
             type="password"
             className={inputClass}
@@ -279,7 +279,7 @@ function ChangePasswordCard() {
             loading ? 'opacity-60 cursor-not-allowed hover:translate-y-0' : '',
           ].join(' ')}
         >
-          {loading ? 'Saving...' : 'Save Password'}
+          {loading ? 'กำลังบันทึก...' : 'บันทึกรหัสผ่าน'}
         </button>
       </form>
     </div>
@@ -390,7 +390,7 @@ function AccountInfoCard() {
 
   return (
     <div>
-      <div className="font-semibold text-gray-900">Account Info</div>
+      <div className="font-semibold text-gray-900">ข้อมูลบัญชีผู้ใช้</div>
       <p className="text-sm text-gray-500 mt-1">แก้ไขข้อมูลบัญชีผู้ใช้ (ชื่อ/ธนาคาร/เลขบัญชีหรือเบอร์โทร)</p>
 
       {loading ? (
@@ -398,20 +398,20 @@ function AccountInfoCard() {
       ) : (
         <form onSubmit={onSave} className="mt-5 space-y-4 max-w-xl">
           <div className="space-y-2">
-            <label className="text-sm font-semibold text-gray-700 ml-1">Name</label>
+            <label className="text-sm font-semibold text-gray-700 ml-1">ชื่อ</label>
             <input className={inputClass} value={name} onChange={(e) => setName(e.target.value)} />
           </div>
 
           <div className="space-y-2">
-            <label className="text-sm font-semibold text-gray-700 ml-1">Email (read-only)</label>
+            <label className="text-sm font-semibold text-gray-700 ml-1">อีเมล (อ่านอย่างเดียว)</label>
             <input className={inputClass2} value={email} readOnly />
           </div>
 
           <div className="space-y-2">
-            <label className="text-sm font-semibold text-gray-700 ml-1">Bank</label>
+            <label className="text-sm font-semibold text-gray-700 ml-1">ธนาคาร</label>
             <select className={selectClass} value={bank} onChange={(e) => setBank(e.target.value)}>
               <option value="" disabled>
-                Choose Your Bank
+                เลือกธนาคารของคุณ
               </option>
               <option value="กสิกรไทย">กสิกรไทย</option>
               <option value="กรุงไทย">กรุงไทย</option>
@@ -422,7 +422,7 @@ function AccountInfoCard() {
           </div>
 
           <div className="space-y-2">
-            <label className="text-sm font-semibold text-gray-700 ml-1">Account Number / Phone (10 digits)</label>
+            <label className="text-sm font-semibold text-gray-700 ml-1">เลขบัญชี / เบอร์โทร (10 หลัก)</label>
             <input
               className={inputClass}
               value={bankAccountNumber}
@@ -434,7 +434,7 @@ function AccountInfoCard() {
           </div>
 
           <div className="space-y-2">
-            <label className="text-sm font-semibold text-gray-700 ml-1">PromptPay Phone (10 digits)</label>
+            <label className="text-sm font-semibold text-gray-700 ml-1">เบอร์พร้อมเพย์ (10 หลัก)</label>
             <input
               className={inputClass}
               value={promptPayPhone}
@@ -468,7 +468,7 @@ function AccountInfoCard() {
               saving ? 'opacity-60 cursor-not-allowed hover:translate-y-0' : '',
             ].join(' ')}
           >
-            {saving ? 'Saving...' : 'Save Changes'}
+            {saving ? 'กำลังบันทึก...' : 'บันทึกการเปลี่ยนแปลง'}
           </button>
         </form>
       )}
@@ -528,14 +528,14 @@ function NotificationsCard() {
   const [copied, setCopied] = useState(false);
 
   const TYPES: Array<{ key: NotificationType; label: string; desc: string }> = [
-    { key: 'BILL_CREATED_OWNER', label: 'Bill created (owner)', desc: 'คุณสร้างบิลสำเร็จ พร้อมรายละเอียดบิล' },
-    { key: 'BILL_ADDED_YOU', label: 'Added to bill', desc: 'ถูกเพิ่มเข้าบิลใหม่' },
-    { key: 'BILL_UPDATED', label: 'Bill updated', desc: 'ชื่อบิล/เมนู/ราคา/ยอด/วิธีหาร/สมาชิกถูกแก้ไข' },
-    { key: 'BILL_STATUS_CHANGED', label: 'Payment status changed', desc: 'มีคนจ่าย/อัปโหลดสลิป ทำให้สถานะคุณเปลี่ยน' },
-    { key: 'BILL_CLOSED', label: 'Bill closed', desc: 'บิลปิดแล้ว ทุกคนจ่ายครบ' },
-    { key: 'DAILY_UNPAID_SUMMARY', label: 'Daily unpaid summary', desc: 'แจ้งเตือนสรุปยอดค้างทุกวัน + ค้างกี่วัน' },
-    { key: 'GROUP_MEMBER_CHANGED', label: 'Group members changed', desc: 'เพิ่ม/ลบสมาชิกในกลุ่ม' },
-    { key: 'GROUP_UPDATED', label: 'Group updated', desc: 'เปลี่ยนชื่อกลุ่ม/รูปกลุ่ม' },
+    { key: 'BILL_CREATED_OWNER', label: 'สร้างบิล (เจ้าของ)', desc: 'คุณสร้างบิลสำเร็จ พร้อมรายละเอียดบิล' },
+    { key: 'BILL_ADDED_YOU', label: 'ถูกเพิ่มเข้าบิล', desc: 'ถูกเพิ่มเข้าบิลใหม่' },
+    { key: 'BILL_UPDATED', label: 'บิลถูกแก้ไข', desc: 'ชื่อบิล/เมนู/ราคา/ยอด/วิธีหาร/สมาชิกถูกแก้ไข' },
+    { key: 'BILL_STATUS_CHANGED', label: 'สถานะการชำระเงินเปลี่ยนแปลง', desc: 'มีคนจ่าย/อัปโหลดสลิป ทำให้สถานะคุณเปลี่ยน' },
+    { key: 'BILL_CLOSED', label: 'บิลปิดแล้ว', desc: 'บิลปิดแล้ว ทุกคนจ่ายครบ' },
+    { key: 'DAILY_UNPAID_SUMMARY', label: 'สรุปยอดค้างรายวัน', desc: 'แจ้งเตือนสรุปยอดค้างทุกวัน + ค้างกี่วัน' },
+    { key: 'GROUP_MEMBER_CHANGED', label: 'สมาชิกกลุ่มเปลี่ยนแปลง', desc: 'เพิ่ม/ลบสมาชิกในกลุ่ม' },
+    { key: 'GROUP_UPDATED', label: 'กลุ่มถูกแก้ไข', desc: 'เปลี่ยนชื่อกลุ่ม/รูปกลุ่ม' },
   ];
 
   const formatTH = (iso: string) =>
@@ -695,7 +695,7 @@ function NotificationsCard() {
 
   return (
     <div>
-      <div className="font-semibold text-gray-900">Manage Notifications</div>
+      <div className="font-semibold text-gray-900">การตั้งค่าแจ้งเตือน</div>
       <p className="text-sm text-gray-500 mt-1">เลือกเปิด/ปิดประเภทการแจ้งเตือน และตั้งเวลาแจ้งสรุปยอดค้าง</p>
 
       {loading ? (
@@ -803,7 +803,7 @@ function NotificationsCard() {
           <div className="rounded-xl border border-black/5 bg-gray-50 p-4">
             <div className="flex items-center justify-between">
               <div>
-                <div className="text-sm font-semibold text-gray-900">Daily unpaid summary</div>
+                <div className="text-sm font-semibold text-gray-900">สรุปยอดค้างรายวัน</div>
                 <div className="text-xs text-gray-500 mt-1">แจ้งทุกวันเป็นสรุป: ค้าง X บิล / ยอดรวม X บาท / ค้างกี่วัน</div>
               </div>
 
@@ -827,7 +827,7 @@ function NotificationsCard() {
             <div className="mt-4 flex items-center gap-3">
               <label className="text-xs text-gray-600 font-semibold">เวลาแจ้ง (ชั่วโมง)</label>
               <select
-                className="px-3 py-2 rounded-xl border border-gray-200 bg-white text-sm"
+                className="px-3 py-2 rounded-xl border border-gray-200 bg-white text-sm text-black"
                 value={s.dailySummaryHour}
                 onChange={(e) => setS((p) => ({ ...p, dailySummaryHour: Number(e.target.value) }))}
                 disabled={!s.dailySummaryEnabled}
@@ -856,7 +856,7 @@ function NotificationsCard() {
                     <div className="text-sm font-semibold text-gray-900">{t.label}</div>
                     <div className="text-xs text-gray-500 mt-1">{t.desc}</div>
                   </div>
-                  <span className={on ? 'text-[#fb8c00] font-bold' : 'text-gray-400 font-semibold'}>{on ? 'ON' : 'OFF'}</span>
+                  <span className={on ? 'text-[#fb8c00] font-bold' : 'text-gray-400 font-semibold'}>{on ? 'เปิด' : 'ปิด'}</span>
                 </button>
               );
             })}
@@ -886,7 +886,7 @@ function NotificationsCard() {
               saving ? 'opacity-60 cursor-not-allowed hover:translate-y-0' : '',
             ].join(' ')}
           >
-            {saving ? 'Saving...' : 'Save Settings'}
+            {saving ? 'กำลังบันทึก...' : 'บันทึกการตั้งค่า'}
           </button>
         </div>
       )}

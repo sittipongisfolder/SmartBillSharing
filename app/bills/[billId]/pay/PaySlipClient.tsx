@@ -144,6 +144,7 @@ export default function PaySlipClient({ billId, forcedGuestAccessToken }: { bill
   const guestAccessToken =
     forcedGuestAccessToken?.trim() ||
     String(searchParams.get('guestAccessToken') ?? '').trim();
+  const inviteToken = String(searchParams.get('inviteToken') ?? '').trim();
   const isGuestMode = guestAccessToken.length > 0;
 
   const HISTORY_PATH = '/history';
@@ -407,8 +408,13 @@ export default function PaySlipClient({ billId, forcedGuestAccessToken }: { bill
       return;
     }
 
+    if (inviteToken) {
+      setGuestSavedLink(`${window.location.origin}/i/${encodeURIComponent(inviteToken)}`);
+      return;
+    }
+
     setGuestSavedLink(`${window.location.origin}/guest/access/${encodeURIComponent(guestAccessToken)}/pay`);
-  }, [guestAccessToken, isGuestMode]);
+  }, [guestAccessToken, inviteToken, isGuestMode]);
 
   async function handleCopyGuestLink() {
     if (!guestSavedLink) return;
@@ -429,26 +435,26 @@ export default function PaySlipClient({ billId, forcedGuestAccessToken }: { bill
         <div className="max-w-6xl mx-auto px-4 py-4 flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
           <div className="w-full min-w-0">
             <div className="text-xs text-gray-500">
-              {isGuestMode ? 'Guest Payment / Verify Slip' : 'Dashboard / Bills / Verify Slip'}
+              {isGuestMode ? 'การชำระเงินของผู้เข้าร่วม / ยืนยันสลิป' : 'แดชบอร์ด / บิล / ยืนยันสลิป'}
             </div>
-            <div className="text-xl font-bold text-[#4a4a4a] mt-1">Verify Payment Slip</div>
+            <div className="text-xl font-bold text-[#4a4a4a] mt-1">การยืนยันสลิปการชำระเงิน</div>
             <div className="text-xs text-gray-500 mt-1">
-              Transaction ID:{' '}
+              รหัสรายการ:{' '}
               <span className="font-semibold text-gray-600 break-all">{billId}</span>
             </div>
             <div className="text-xs text-gray-500 mt-1">
-              Bill: <span className="font-semibold text-gray-700">{billTitle || '-'}</span>
+              บิล: <span className="font-semibold text-gray-700">{billTitle || '-'}</span>
             </div>
             {viewerName ? (
               <div className="text-xs text-gray-500 mt-1">
-                Paying as: <span className="font-semibold text-gray-700">{viewerName}</span>
+                ผู้จ่าย: <span className="font-semibold text-gray-700">{viewerName}</span>
               </div>
             ) : null}
           </div>
           {isGuestMode ? (
             <div className="mx-auto w-full max-w-[720px] rounded-2xl border border-gray-200 bg-white p-4 shadow-sm sm:p-5">
               <div className="text-base font-bold text-gray-900 sm:text-lg">
-                Guest Payment Link
+                ลิงก์การชำระเงินสำหรับผู้เข้าร่วม
               </div>
 
               <p className="mt-1 text-sm leading-6 text-gray-600">
@@ -486,7 +492,7 @@ export default function PaySlipClient({ billId, forcedGuestAccessToken }: { bill
                 onClick={() => router.push(HISTORY_PATH)}
                 className="inline-flex shrink-0 items-center justify-center gap-2 rounded-xl border border-[#fb8c00] bg-orange-50 px-4 py-2 text-sm font-semibold text-[#e65100] shadow-sm transition hover:bg-[#fff7ed] hover:shadow-md active:scale-[0.98]"
               >
-                Back
+                กลับ
               </button>
             </div>
           )}
@@ -496,35 +502,35 @@ export default function PaySlipClient({ billId, forcedGuestAccessToken }: { bill
       <div className="max-w-6xl mx-auto px-4 py-6 space-y-5">
         {/* Pay to PromptPay + QR */}
         <div className="bg-white rounded-2xl shadow-sm border p-5">
-          <div className="text-lg font-bold text-gray-800 mb-4">Pay to (PromptPay)</div>
+          <div className="text-lg font-bold text-gray-800 mb-4">ชำระไปยัง (PromptPay)</div>
 
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
             {/* left info */}
             <div className="rounded-2xl border bg-gray-50 p-5">
-              <div className="text-xs text-gray-500">Receiver</div>
+              <div className="text-xs text-gray-500">ผู้รับเงิน</div>
               <div className="text-lg font-extrabold text-gray-900 mt-1">{owner?.name ?? '-'}</div>
 
-              <div className="mt-4 text-xs text-gray-500">Bank</div>
+              <div className="mt-4 text-xs text-gray-500">ธนาคาร</div>
               <div className="font-bold text-gray-900 mt-1">
                 {owner?.bank ?? '-'}
                 <br />
                 {owner?.bankAccountNumber ?? '-'}
               </div>
 
-              <div className="mt-4 text-xs text-gray-500">PromptPay (Phone)</div>
+              <div className="mt-4 text-xs text-gray-500">พร้อมเพย์ (เบอร์โทร)</div>
               <div className="font-extrabold text-gray-900 mt-1">{owner?.promptPayPhone ?? '-'}</div>
 
               <hr className="my-4 border-gray-200" />
 
               <div className="space-y-3">
                 <div className="flex justify-between items-center">
-                  <span className="text-sm text-gray-500">ค่าใช้จ่าย (Your Share)</span>
+                  <span className="text-sm text-gray-500">ยอดที่ต้องจ่ายของคุณ</span>
                   <span className="font-bold text-gray-900">{formatMoneyTHB(myShare)}</span>
                 </div>
 
                 <div className="flex justify-between items-center">
                   <label htmlFor="tip-input" className="text-sm text-gray-900 flex items-center gap-1">
-                    ทิป (Tip) ❤️
+                    ทิป ❤️
                   </label>
                   <div className="relative text-gray-900">
                     <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-900 text-sm">
@@ -565,7 +571,7 @@ export default function PaySlipClient({ billId, forcedGuestAccessToken }: { bill
                   {/* eslint-disable-next-line @next/next/no-img-element */}
                   <img
                     src={qrDataUrl}
-                    alt="PromptPay QR"
+                    alt="คิวอาร์โค้ดพร้อมเพย์"
                     className="w-[320px] h-[320px] object-contain"
                   />
 
@@ -601,7 +607,7 @@ export default function PaySlipClient({ billId, forcedGuestAccessToken }: { bill
         {/* ORIGINAL RECEIPT + verify */}
         <div className="bg-white rounded-2xl shadow-sm border overflow-hidden">
           <div className="flex items-center justify-between px-5 py-4 border-b">
-            <div className="font-semibold text-gray-800">ORIGINAL RECEIPT</div>
+            <div className="font-semibold text-gray-800">แนบสลิปการโอนเงิน</div>
 
             <label className="inline-flex items-center gap-2 text-sm text-gray-600 cursor-pointer">
               <input
@@ -622,7 +628,7 @@ export default function PaySlipClient({ billId, forcedGuestAccessToken }: { bill
                 // eslint-disable-next-line @next/next/no-img-element
                 <img
                   src={previewUrl}
-                  alt="slip preview"
+                  alt="ตัวอย่างสลิป"
                   className="w-full h-[520px] object-contain"
                 />
               ) : (
@@ -652,10 +658,10 @@ export default function PaySlipClient({ billId, forcedGuestAccessToken }: { bill
                 )}
               >
                 {loading
-                  ? 'Verifying...'
+                  ? 'กำลังตรวจสอบ...'
                   : redirectIn !== null
-                    ? `Redirecting (${redirectIn})`
-                    : 'Verify Slip'}
+                    ? `กำลังเปลี่ยนหน้า (${redirectIn})`
+                    : 'ตรวจสอบสลิป'}
               </button>
             </div>
 

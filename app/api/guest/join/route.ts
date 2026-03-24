@@ -112,24 +112,9 @@ export async function POST(req: Request) {
     );
   }
 
-  if (invite.maxUses != null && invite.usedCount >= invite.maxUses) {
-    return NextResponse.json(
-      { error: "Invite quota reached" },
-      { status: 409 },
-    );
-  }
-
   const bill = await Bill.findById(invite.billId);
   if (!bill) {
     return NextResponse.json({ error: "Bill not found" }, { status: 404 });
-  }
-
-  // ✅ join ได้เฉพาะตอน draft
-  if (bill.stage !== "draft") {
-    return NextResponse.json(
-      { error: "บิลนี้เปิดใช้งานแล้ว ไม่สามารถใช้ลิงก์เชิญนี้ได้" },
-      { status: 409 },
-    );
   }
 
   const participantId = idToString(invite.participantId);
@@ -148,6 +133,67 @@ export async function POST(req: Request) {
     return NextResponse.json(
       { error: "Guest slot not found" },
       { status: 404 },
+    );
+  }
+
+  const rawSession = generateToken(32);
+  const sessionHash = hashToken(rawSession);
+  const rawAccessToken = generateToken(32);
+  const accessTokenHash = hashToken(rawAccessToken);
+  const expiresAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000);
+  const isHttps = req.headers.get("x-forwarded-proto") === "https";
+
+  const redirectToGuestAccess = async (guestId: unknown) => {
+    await GuestSession.create({
+      guestId,
+      tokenHash: sessionHash,
+      expiresAt,
+    });
+
+    await GuestAccessLink.create({
+      guestId,
+      billId: bill._id,
+      tokenHash: accessTokenHash,
+      tokenLast4: rawAccessToken.slice(-4),
+      isActive: true,
+      expiresAt,
+    });
+
+    const res = NextResponse.redirect(
+      new URL(`/guest/access/${rawAccessToken}?inviteToken=${encodeURIComponent(token)}`, req.url),
+    );
+
+    res.cookies.set("sb_guest", rawSession, {
+      httpOnly: true,
+      sameSite: "lax",
+      secure: isHttps,
+      path: "/",
+      maxAge: 30 * 24 * 60 * 60,
+    });
+
+    return res;
+  };
+
+  if (slot.kind === "guest" && slot.guestId) {
+    if (!invite.guestId) {
+      invite.guestId = slot.guestId;
+      await invite.save();
+    }
+    return redirectToGuestAccess(slot.guestId);
+  }
+
+  // ✅ join ใหม่ได้เฉพาะตอน draft
+  if (bill.stage !== "draft") {
+    return NextResponse.json(
+      { error: "บิลนี้เปิดใช้งานแล้ว ไม่สามารถใช้ลิงก์เชิญนี้ได้" },
+      { status: 409 },
+    );
+  }
+
+  if (invite.maxUses != null && invite.usedCount >= invite.maxUses) {
+    return NextResponse.json(
+      { error: "Invite quota reached" },
+      { status: 409 },
     );
   }
 
@@ -183,43 +229,8 @@ export async function POST(req: Request) {
   await bill.save();
 
   invite.usedCount += 1;
-  invite.revoked = true; // ✅ ใช้แล้วปิดเลย
+  invite.guestId = guest._id;
   await invite.save();
 
-  const rawSession = generateToken(32);
-  const sessionHash = hashToken(rawSession);
-  const expiresAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000);
-  const isHttps = req.headers.get("x-forwarded-proto") === "https";
-
-  await GuestSession.create({
-    guestId: guest._id,
-    tokenHash: sessionHash,
-    expiresAt,
-  });
-
-  const rawAccessToken = generateToken(32);
-  const accessTokenHash = hashToken(rawAccessToken);
-
-  await GuestAccessLink.create({
-    guestId: guest._id,
-    billId: bill._id,
-    tokenHash: accessTokenHash,
-    tokenLast4: rawAccessToken.slice(-4),
-    isActive: true,
-    expiresAt,
-  });
-
-  const res = NextResponse.redirect(
-    new URL(`/guest/access/${rawAccessToken}`, req.url),
-  );
-
-  res.cookies.set("sb_guest", rawSession, {
-    httpOnly: true,
-    sameSite: "lax",
-    secure: isHttps,
-    path: "/",
-    maxAge: 30 * 24 * 60 * 60,
-  });
-
-  return res;
+  return redirectToGuestAccess(guest._id);
 }

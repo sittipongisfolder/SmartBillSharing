@@ -7,18 +7,22 @@ import Bill from "@/models/bill";
 import Invite from "@/models/invite";
 import { generateToken, hashToken } from "@/lib/tokens";
 import { isRecord } from "@/lib/typeGuards";
+import GuestAccessLink from "@/models/guestAccessLink";
 
 export const runtime = "nodejs";
 
 type CreateInviteBody = {
   participantId: string;
-  expiresInDays?: number;
   maxUses?: number;
 };
 
 type RouteContext = {
   params: Promise<{ billId: string }>;
 };
+
+function isInviteNotExpired(expiresAt?: Date | null): boolean {
+  return !expiresAt || expiresAt.getTime() > Date.now();
+}
 
 function idToString(v: unknown): string {
   if (!v) return "";
@@ -52,10 +56,6 @@ export async function POST(req: Request, { params }: RouteContext) {
           typeof bodyUnknown.participantId === "string"
             ? bodyUnknown.participantId.trim()
             : undefined,
-        expiresInDays:
-          typeof bodyUnknown.expiresInDays === "number"
-            ? bodyUnknown.expiresInDays
-            : undefined,
         maxUses:
           typeof bodyUnknown.maxUses === "number"
             ? bodyUnknown.maxUses
@@ -72,9 +72,6 @@ export async function POST(req: Request, { params }: RouteContext) {
       { status: 400 },
     );
   }
-
-  const expiresInDaysRaw = body.expiresInDays ?? 7;
-  const expiresInDays = Math.max(1, Math.min(30, Math.trunc(expiresInDaysRaw)));
 
   // ✅ 1 slot = 1 invite = 1 คน เสมอ
   const maxUses = 1;
@@ -124,7 +121,35 @@ export async function POST(req: Request, { params }: RouteContext) {
 
   const rawToken = generateToken(32);
   const tokenHash = hashToken(rawToken);
-  const expiresAt = new Date(Date.now() + expiresInDays * 24 * 60 * 60 * 1000);
+  const expiresAt: Date | null = null;
+
+  const existingInvite = (await Invite.findOne({
+    billId: bill._id,
+    participantId: participant._id,
+    revoked: false,
+  })
+    .sort({ createdAt: -1 })
+    .lean()) as
+    | {
+        tokenPlain?: string;
+        expiresAt?: Date | null;
+        maxUses?: number | null;
+      }
+    | null;
+
+  if (
+    existingInvite?.tokenPlain &&
+    isInviteNotExpired(existingInvite.expiresAt)
+  ) {
+    return NextResponse.json({
+      invitePath: `/i/${existingInvite.tokenPlain}`,
+      expiresAt: existingInvite.expiresAt ?? null,
+      maxUses: existingInvite.maxUses ?? maxUses,
+      participantId: idToString(participant._id),
+      participantName: participant.name,
+      reused: true,
+    });
+  }
 
   await Invite.updateMany(
     {
@@ -142,6 +167,7 @@ export async function POST(req: Request, { params }: RouteContext) {
     participantId: participant._id,
     createdBy: userId,
     tokenHash,
+    tokenPlain: rawToken,
     expiresAt,
     maxUses,
     usedCount: 0,
@@ -155,4 +181,126 @@ export async function POST(req: Request, { params }: RouteContext) {
     participantId: idToString(participant._id),
     participantName: participant.name,
   });
+}
+
+export async function GET(req: Request, { params }: RouteContext) {
+  const { billId } = await params;
+
+  if (!mongoose.Types.ObjectId.isValid(billId)) {
+    return NextResponse.json({ error: "billId ไม่ถูกต้อง" }, { status: 400 });
+  }
+
+  const participantId = new URL(req.url).searchParams.get("participantId")?.trim() ?? "";
+  if (!participantId || !mongoose.Types.ObjectId.isValid(participantId)) {
+    return NextResponse.json(
+      { error: "participantId ไม่ถูกต้อง" },
+      { status: 400 },
+    );
+  }
+
+  const session = await getServerSession(authOptions);
+  const userId = session?.user?.id;
+
+  if (!userId) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+
+  await connectMongoDB();
+
+  const bill = await Bill.findById(billId);
+  if (!bill) {
+    return NextResponse.json({ error: "Bill not found" }, { status: 404 });
+  }
+
+  if (String(bill.createdBy) !== String(userId)) {
+    return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+  }
+
+  const participant = Array.isArray(bill.participants)
+    ? bill.participants.find((p) => idToString(p._id) === participantId)
+    : undefined;
+
+  if (!participant) {
+    return NextResponse.json(
+      { error: "ไม่พบ participant นี้ในบิล" },
+      { status: 404 },
+    );
+  }
+
+  const invite = (await Invite.findOne({
+    billId: bill._id,
+    participantId: participant._id,
+    revoked: false,
+  })
+    .sort({ createdAt: -1 })
+    .lean()) as
+    | {
+        tokenPlain?: string;
+        expiresAt?: Date | null;
+        maxUses?: number | null;
+        guestId?: unknown;
+      }
+    | null;
+
+  const participantGuestId = idToString((participant as { guestId?: unknown }).guestId);
+
+  const inviteByGuest = !invite && participantGuestId
+    ? ((await Invite.findOne({
+        billId: bill._id,
+        guestId: participantGuestId,
+        revoked: false,
+      })
+        .sort({ createdAt: -1 })
+        .lean()) as
+        | {
+            tokenPlain?: string;
+            expiresAt?: Date | null;
+            maxUses?: number | null;
+            guestId?: unknown;
+          }
+        | null)
+    : null;
+
+  const effectiveInvite = invite ?? inviteByGuest;
+
+  if (
+    effectiveInvite?.tokenPlain &&
+    isInviteNotExpired(effectiveInvite.expiresAt)
+  ) {
+    return NextResponse.json({
+      invitePath: `/i/${effectiveInvite.tokenPlain}`,
+      expiresAt: effectiveInvite.expiresAt ?? null,
+      maxUses: effectiveInvite.maxUses ?? null,
+      participantId,
+      participantName: participant.name,
+    });
+  }
+
+  if (participantGuestId) {
+    const rawAccessToken = generateToken(32);
+    const expiresAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000);
+
+    await GuestAccessLink.create({
+      guestId: participantGuestId,
+      billId: bill._id,
+      tokenHash: hashToken(rawAccessToken),
+      tokenLast4: rawAccessToken.slice(-4),
+      isActive: true,
+      expiresAt,
+    });
+
+    return NextResponse.json({
+      invitePath: `/guest/access/${rawAccessToken}/pay`,
+      expiresAt,
+      maxUses: null,
+      participantId,
+      participantName: participant.name,
+      fallback: true,
+    });
+  }
+
+  return NextResponse.json(
+    { error: "ไม่พบลิงก์เชิญที่ยังใช้งานได้สำหรับ participant นี้" },
+    { status: 404 },
+  );
 }

@@ -73,7 +73,7 @@ function LoginContent() {
               <h1 className="text-2xl md:text-[26px] font-extrabold tracking-tight text-[var(--text-color)] leading-tight">
                 Smart Bill <span className="text-[#fb8c00]">Sharing</span> System
               </h1>
-              <p className="text-gray-500 font-medium">Welcome back, please login.</p>
+              <p className="text-gray-500 font-medium">ยินดีต้อนรับ กรุณาเข้าสู่ระบบ</p>
             </div>
           </div>
 
@@ -82,7 +82,7 @@ function LoginContent() {
             {/* Email */}
             <div className="space-y-2">
               <label className="text-sm font-semibold text-gray-700 ml-1" htmlFor="username">
-                Email Address
+                อีเมล
               </label>
               <div className="relative">
                 <input
@@ -102,15 +102,14 @@ function LoginContent() {
             <div className="space-y-2">
               <div className="flex items-center justify-between ml-1">
                 <label className="text-sm font-semibold text-gray-700" htmlFor="password">
-                  Password
+                  รหัสผ่าน
                 </label>
-                <button
-                  type="button"
+                <Link
+                  href="/forgot-password"
                   className="text-xs font-semibold text-[#fb8c00] hover:underline"
-                  onClick={() => {}}
                 >
-                  Forgot?
-                </button>
+                  ลืมรหัสผ่าน?
+                </Link>
               </div>
 
               <div className="relative">
@@ -151,7 +150,7 @@ function LoginContent() {
                     : 'shadow-orange-200 hover:shadow-orange-300 hover:-translate-y-0.5 active:scale-[0.98] bg-[linear-gradient(135deg,#fb8c00_0%,#e65100_100%)]'
                 }`}
               >
-                {loading ? 'กำลังเข้าสู่ระบบ...' : 'Sign In'}
+                {loading ? 'กำลังเข้าสู่ระบบ...' : 'เข้าสู่ระบบ'}
               </button>
             </div>
           </form>
@@ -159,12 +158,12 @@ function LoginContent() {
           {/* Footer link */}
           <div className="text-center pt-2">
             <p className="text-sm text-gray-500 font-medium">
-              Don&apos;t have an account?
+              ยังไม่มีบัญชีผู้ใช้?
               <Link
                 href="/register"
                 className="ml-1 text-[#fb8c00] font-bold hover:text-[#e65100] transition-colors"
               >
-                Join Now
+                สมัครสมาชิก
               </Link>
             </p>
           </div>

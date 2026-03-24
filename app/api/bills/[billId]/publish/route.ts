@@ -31,6 +31,8 @@ type PublishBillBody = {
     percent?: number | "";
   }>;
   totalPrice?: number;
+  receiptImageUrl?: string;
+  receiptImagePublicId?: string;
 };
 
 type RouteContext = {
@@ -47,6 +49,7 @@ type SlipInfoInput = {
 };
 
 type UserParticipantInput = {
+  _id?: mongoose.Types.ObjectId;
   kind: "user";
   userId: string;
   name: string;
@@ -58,6 +61,7 @@ type UserParticipantInput = {
 };
 
 type GuestPlaceholderParticipantInput = {
+  _id?: mongoose.Types.ObjectId;
   kind: "guest_placeholder";
   name: string;
   amount: number;
@@ -66,6 +70,7 @@ type GuestPlaceholderParticipantInput = {
 };
 
 type GuestParticipantInput = {
+  _id?: mongoose.Types.ObjectId;
   kind: "guest";
   guestId: mongoose.Types.ObjectId;
   name: string;
@@ -141,6 +146,22 @@ function copySlipInfo(
     checkedAt: slip.checkedAt,
     verified: slip.verified,
   };
+}
+
+function resolveParticipantObjectId(
+  old: ExistingParticipantLike | undefined,
+  participantId?: string,
+): mongoose.Types.ObjectId | undefined {
+  const oldId = idToString(old?._id);
+  if (oldId && mongoose.Types.ObjectId.isValid(oldId)) {
+    return new mongoose.Types.ObjectId(oldId);
+  }
+
+  if (participantId && mongoose.Types.ObjectId.isValid(participantId)) {
+    return new mongoose.Types.ObjectId(participantId);
+  }
+
+  return undefined;
 }
 
 export async function PATCH(req: NextRequest, context: RouteContext) {
@@ -329,6 +350,7 @@ export async function PATCH(req: NextRequest, context: RouteContext) {
         seenUserIds.add(userId);
 
         mergedParticipants.push({
+          _id: resolveParticipantObjectId(old, participantId),
           kind: "user",
           userId,
           name,
@@ -356,6 +378,7 @@ export async function PATCH(req: NextRequest, context: RouteContext) {
           seenGuestIds.add(oldGuestId);
 
           mergedParticipants.push({
+            _id: resolveParticipantObjectId(old, participantId),
             kind: "guest",
             guestId: new mongoose.Types.ObjectId(oldGuestId),
             name: clampName(old.name) || name,
@@ -369,6 +392,7 @@ export async function PATCH(req: NextRequest, context: RouteContext) {
         }
 
         mergedParticipants.push({
+          _id: resolveParticipantObjectId(old, participantId),
           kind: "guest_placeholder",
           name,
           amount,
@@ -384,6 +408,7 @@ export async function PATCH(req: NextRequest, context: RouteContext) {
         seenGuestIds.add(effectiveGuestId);
 
         mergedParticipants.push({
+          _id: resolveParticipantObjectId(old, participantId),
           kind: "guest",
           guestId: new mongoose.Types.ObjectId(effectiveGuestId),
           name,
@@ -406,6 +431,7 @@ export async function PATCH(req: NextRequest, context: RouteContext) {
       );
 
       mergedParticipants.unshift({
+        _id: resolveParticipantObjectId(oldOwner),
         kind: "user",
         userId: ownerId,
         name: clampName(me.name) || "You",
@@ -498,6 +524,9 @@ export async function PATCH(req: NextRequest, context: RouteContext) {
             ? "pending"
             : "unpaid";
 
+    const incomingReceiptUrl = (body.receiptImageUrl ?? "").trim();
+    const incomingReceiptPublicId = (body.receiptImagePublicId ?? "").trim();
+
     draftBill.set({
       title,
       description: String(body.description ?? "").trim(),
@@ -508,6 +537,8 @@ export async function PATCH(req: NextRequest, context: RouteContext) {
       stage: "active",
       publishedAt: new Date(),
       billStatus: nextBillStatus,
+      ...(incomingReceiptUrl ? { receiptImageUrl: incomingReceiptUrl } : {}),
+      ...(incomingReceiptPublicId ? { receiptImagePublicId: incomingReceiptPublicId } : {}),
     });
 
     // ✅ ลบ field draftExpiresAt ออก

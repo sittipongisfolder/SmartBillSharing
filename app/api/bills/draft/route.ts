@@ -65,7 +65,7 @@ type DraftItemInput = {
   assignedParticipantIds: string[];
 };
 
-const DRAFT_EXPIRE_HOURS = 24;
+const DRAFT_EXPIRE_HOURS = 0.2;
 
 const toNumber = (v: unknown, fallback = 0) => {
   const n =

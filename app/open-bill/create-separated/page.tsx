@@ -227,6 +227,12 @@ function CreateBillPersonalPageInner() {
     typeRaw === 'equal' || typeRaw === 'percentage' || typeRaw === 'personal'
       ? typeRaw
       : 'personal';
+  const splitTypeLabel =
+    splitType === 'equal'
+      ? 'หารเท่ากัน'
+      : splitType === 'percentage'
+        ? 'หารตามเปอร์เซ็นต์'
+        : 'หารตามรายการ';
 
   const { data: session } = useSession();
   const currentUserEmail = session?.user?.email ?? null;
@@ -358,6 +364,9 @@ function CreateBillPersonalPageInner() {
     const picked = e.target.files?.[0];
     if (!picked) return;
 
+    localStorage.removeItem('ocrReceiptImageUrl');
+    localStorage.removeItem('ocrReceiptImagePublicId');
+
     setSelectedFileName(picked.name);
     setUploading(true);
 
@@ -366,6 +375,36 @@ function CreateBillPersonalPageInner() {
       const imagePreviewUrl = URL.createObjectURL(compressed);
       setSelectedImagePreview(imagePreviewUrl);
       setOcrImageFile(compressed);
+
+      const token = localStorage.getItem('token');
+      const fd = new FormData();
+      fd.append('file', compressed);
+      if (draftBillId) {
+        fd.append('billId', draftBillId);
+      }
+
+      const uploadRes = await fetch('/api/ocr/upload-receipt', {
+        method: 'POST',
+        headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+        body: fd,
+      });
+
+      if (!uploadRes.ok) {
+        throw new Error('อัปโหลดรูปบิลไม่สำเร็จ');
+      }
+
+      const uploadData = (await uploadRes.json()) as {
+        url?: string;
+        publicId?: string;
+      };
+
+      const receiptImageUrl = uploadData.url || '';
+      const receiptImagePublicId = uploadData.publicId || '';
+
+      if (receiptImageUrl) {
+        localStorage.setItem('ocrReceiptImageUrl', receiptImageUrl);
+        localStorage.setItem('ocrReceiptImagePublicId', receiptImagePublicId);
+      }
     } catch (err: unknown) {
       const errorMsg = err instanceof Error ? err.message : 'เกิดข้อผิดพลาด';
       console.error('Direct upload error:', err);
@@ -1248,6 +1287,9 @@ function CreateBillPersonalPageInner() {
       const endpoint = draftBillId ? `/api/bills/${draftBillId}/publish` : '/api/bills';
       const method = draftBillId ? 'PATCH' : 'POST';
 
+      const receiptImageUrl = localStorage.getItem('ocrReceiptImageUrl') || '';
+      const receiptImagePublicId = localStorage.getItem('ocrReceiptImagePublicId') || '';
+
       const res = await fetch(endpoint, {
         method,
         headers: { 'Content-Type': 'application/json' },
@@ -1260,6 +1302,8 @@ function CreateBillPersonalPageInner() {
           participants: cleanedParticipants,
           description,
           items: cleanedItems,
+          ...(receiptImageUrl ? { receiptImageUrl } : {}),
+          ...(receiptImagePublicId ? { receiptImagePublicId } : {}),
         }),
       });
 
@@ -1274,6 +1318,8 @@ function CreateBillPersonalPageInner() {
 
       if (res.ok) {
         alert(draftBillId ? 'เปิดบิลสำเร็จ!' : 'สร้างบิลสำเร็จ!');
+        localStorage.removeItem('ocrReceiptImageUrl');
+        localStorage.removeItem('ocrReceiptImagePublicId');
         resetForm();
       } else {
         console.log('CREATE BILL ERROR:', res.status, data);
@@ -1301,26 +1347,26 @@ function CreateBillPersonalPageInner() {
       <div className="min-h-screen flex flex-col items-center justify-center p-6 bg-[radial-gradient(circle_at_top_right,#fff5e6_0%,#ffffff_40%,#fff0e0_100%)]">
         <div className="w-full max-w-150 bg-white rounded-2xl shadow-xl p-8 relative">
           <h1 className="text-3xl font-bold mb-4 text-center text-[#4a4a4a]">
-            Add New Bill <span className="text-sm font-normal text-gray-500">({splitType})</span>
+            สร้างบิลใหม่ <span className="text-sm font-normal text-gray-500">({splitTypeLabel})</span>
           </h1>
 
           <div className="border-dashed border-2 border-gray-300 rounded-xl p-8 text-center mb-6">
-            <p className="text-lg text-[#4a4a4a] mb-2">Upload a receipt or drag and drop</p>
-            <p className="text-xs text-gray-400 mb-2">PNG, JPG up to 10MB</p>
+            <p className="text-lg text-[#4a4a4a] mb-2">อัปโหลดรูปบิล หรือ ลากไฟล์มาวาง</p>
+            <p className="text-xs text-gray-400 mb-2">รองรับ PNG, JPG ขนาดไม่เกิน 10MB</p>
 
             {selectedImagePreview ? (
               <div className="mb-4 relative">
                 <div className="relative mb-3 h-64 w-full overflow-hidden rounded-2xl border border-gray-200 bg-white">
                   <Image
                     src={selectedImagePreview}
-                    alt="Receipt preview"
+                    alt="ตัวอย่างรูปบิล"
                     fill
                     unoptimized
                     className="object-contain"
                   />
                 </div>
                 <p className="text-xs text-gray-500">
-                  Selected: <span className="font-medium">{selectedFileName}</span>
+                  ไฟล์ที่เลือก: <span className="font-medium">{selectedFileName}</span>
                 </p>
               </div>
             ) : (
@@ -1349,7 +1395,7 @@ function CreateBillPersonalPageInner() {
                 className={btnPrimary}
                 disabled={uploading || submitting}
               >
-                {uploading ? 'Processing...' : '🤖 Scan with OCR'}
+                {uploading ? 'กำลังประมวลผล...' : '🤖 สแกนด้วย OCR'}
               </button>
               <button
                 type="button"
@@ -1357,23 +1403,23 @@ function CreateBillPersonalPageInner() {
                 className={btnSecondary}
                 disabled={uploading || submitting}
               >
-                {uploading ? 'Processing...' : '📸 Upload Only'}
+                {uploading ? 'กำลังประมวลผล...' : '📸 อัปโหลดรูปอย่างเดียว'}
               </button>
             </div>
           </div>
 
           <div className="flex items-center justify-center mb-6">
             <hr className="w-1/3 border-[#e0e0e0]" />
-            <span className="mx-2 text-[#4a4a4a] text-sm">OR</span>
+            <span className="mx-2 text-[#4a4a4a] text-sm">หรือ</span>
             <hr className="w-1/3 border-[#e0e0e0]" />
           </div>
 
           <div className="mb-4">
-            <label className="block mb-1 text-sm text-gray-600">Bill Title</label>
+            <label className="block mb-1 text-sm text-gray-600">ชื่อบิล</label>
             <input
               type="text"
               className="w-full p-3 border text-gray-800 placeholder:text-gray-400 border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#fb8c00]"
-              placeholder="e.g., Friday Team Lunch"
+              placeholder="เช่น เลี้ยงข้าวทีมวันศุกร์"
               value={title}
               onChange={(e) => setTitle(e.target.value)}
             />
@@ -1381,10 +1427,10 @@ function CreateBillPersonalPageInner() {
 
           <div className="mb-2">
             <div className="mt-3 grid grid-cols-12 gap-3 text-xs text-gray-500">
-              <div className="col-span-4">Items</div>
-              <div className="col-span-2">Qty</div>
-              <div className="col-span-2">Price</div>
-              <div className="col-span-4">Owner</div>
+              <div className="col-span-4">รายการ</div>
+              <div className="col-span-2">จำนวน</div>
+              <div className="col-span-2">ราคา</div>
+              <div className="col-span-4">ผู้รับผิดชอบ</div>
             </div>
 
             {itemList.map((it) => (
@@ -1394,7 +1440,7 @@ function CreateBillPersonalPageInner() {
                     <input
                       type="text"
                       className="w-full p-3 border text-gray-800 placeholder:text-gray-400 border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#fb8c00]"
-                      placeholder="e.g., Fried rice"
+                      placeholder="เช่น ข้าวผัด"
                       value={it.items}
                       onChange={(e) =>
                         handleItemChange(it.id, 'items', e.target.value)
@@ -1441,7 +1487,7 @@ function CreateBillPersonalPageInner() {
                       onChange={(e) => handleOwnerChange(it.id, e.target.value)}
                     >
                       <option value="">-- เลือก --</option>
-                      <option value="__shared__">Shared</option>
+                      <option value="__shared__">หารร่วมกัน</option>
                       {selectedParticipants.map((p) => (
                         <option key={p.localId} value={p.localId}>
                           {p.name}
@@ -1526,7 +1572,7 @@ function CreateBillPersonalPageInner() {
                 onClick={assignUnassignedToMe}
                 className="text-sm text-gray-700 font-medium hover:text-gray-900"
               >
-                Assign ช่องว่างให้ฉัน
+                กำหนดช่องว่างให้ฉัน
               </button>
 
               <button
@@ -1534,17 +1580,17 @@ function CreateBillPersonalPageInner() {
                 onClick={assignAllShared}
                 className="text-sm text-gray-700 font-medium hover:text-gray-900"
               >
-                ตั้งทุกช่องเป็น Shared
+                ตั้งทุกรายการเป็นหารร่วมกัน
               </button>
             </div>
 
             <p className="mt-2 text-xs text-gray-400">
-              * รายการ Owner/Shared จะอ้างอิงจาก Participants ที่เลือกไว้ (อยู่ด้านล่าง)
+              * การกำหนดผู้รับผิดชอบหรือหารร่วมกัน จะอ้างอิงจากผู้เข้าร่วมที่เลือกไว้ด้านล่าง
             </p>
           </div>
 
           <div className="mb-6 mt-6">
-            <label className="block mb-1 text-sm text-gray-600">Participants</label>
+            <label className="block mb-1 text-sm text-gray-600">ผู้เข้าร่วม</label>
 
             <div className="space-y-3">
               {participants.map((p, index) => {
@@ -1589,7 +1635,7 @@ function CreateBillPersonalPageInner() {
                           .map((u) => (
                             <option key={u._id} value={u._id}>
                               {u.name}
-                              {u.email === currentUserEmail ? ' (You)' : ''}
+                              {u.email === currentUserEmail ? ' (คุณ)' : ''}
                             </option>
                           ))}
                       </select>
@@ -1598,7 +1644,7 @@ function CreateBillPersonalPageInner() {
                         <div className="flex items-center gap-2">
                           <span className="font-medium">{p.name}</span>
                           <span className="text-xs px-2 py-0.5 rounded-full bg-gray-200 text-gray-600">
-                            {p.kind === 'guest' ? 'Guest joined' : 'Guest slot'}
+                            {p.kind === 'guest' ? 'Guest เข้าร่วมแล้ว' : 'ช่องสำหรับ Guest'}
                           </span>
                         </div>
                       </div>
@@ -1660,12 +1706,12 @@ function CreateBillPersonalPageInner() {
                 className="text-sm text-[#fb8c00] font-medium hover:text-[#e65100]"
                 type="button"
               >
-                ➕ เพิ่ม Guest Slot
+                ➕ เพิ่มช่อง Guest
               </button>
 
               {draftBillId ? (
                 <span className="text-xs px-2 py-1 rounded-full bg-orange-50 text-orange-700 border border-orange-200">
-                  Draft created
+                  บันทึกฉบับร่างแล้ว
                 </span>
               ) : null}
             </div>
@@ -1684,7 +1730,7 @@ function CreateBillPersonalPageInner() {
           </div>
 
           <div className="mb-6 mt-6">
-            <label className="block mb-1 text-sm text-gray-600">Description</label>
+            <label className="block mb-1 text-sm text-gray-600">รายละเอียดเพิ่มเติม</label>
             <textarea
               rows={3}
               className="w-full p-3 border text-gray-800 border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#fb8c00] resize-none"

@@ -16,6 +16,8 @@ interface IUser extends Document {
   name: string;
   email: string;
   password: string;
+  resetPasswordToken?: string;
+  resetPasswordExpiresAt?: Date | null;
 
   bank: string;
   bankAccountNumber: string;
@@ -48,6 +50,10 @@ const userSchema: Schema<IUser> = new Schema(
     },
 
     password: { type: String, required: true },
+
+  resetPasswordToken: { type: String, default: null, index: true },
+
+  resetPasswordExpiresAt: { type: Date, default: null },
 
     bank: { type: String, required: true, trim: true },
 

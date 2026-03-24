@@ -1,8 +1,10 @@
-import { notFound } from 'next/navigation';
+import { notFound, redirect } from 'next/navigation';
 import { connectMongoDB } from '@/lib/mongodb';
 import Invite from '@/models/invite';
 import Bill from '@/models/bill';
-import { hashToken } from '@/lib/tokens';
+import { generateToken, hashToken } from '@/lib/tokens';
+import GuestSession from '@/models/guestSession';
+import GuestAccessLink from '@/models/guestAccessLink';
 
 export const runtime = 'nodejs';
 
@@ -27,8 +29,65 @@ export default async function InviteJoinPage({
   const bill = await Bill.findById(invite.billId).lean();
   if (!bill) notFound();
 
+  const participantId = String(invite.participantId ?? '');
+  const participant = Array.isArray(bill.participants)
+    ? bill.participants.find((p) => String(p?._id ?? '') === participantId)
+    : null;
+
+  const guests = Array.isArray(bill.participants)
+    ? bill.participants.filter((p) => p?.kind === 'guest' && p?.guestId)
+    : [];
+
+  const guestIdFromInvite = String(invite.guestId ?? '');
+  const guestFromInvite = guestIdFromInvite
+    ? guests.find((p) => String(p?.guestId ?? '') === guestIdFromInvite)
+    : null;
+
+  const resolvedGuest =
+    (participant?.kind === 'guest' && participant.guestId ? participant : null) ||
+    guestFromInvite ||
+    (bill.stage === 'active' && invite.usedCount > 0 && guests.length === 1 ? guests[0] : null);
+
+  if (resolvedGuest?.guestId) {
+    const rawAccessToken = generateToken(32);
+    const rawSession = generateToken(32);
+
+    await GuestSession.create({
+      guestId: resolvedGuest.guestId,
+      tokenHash: hashToken(rawSession),
+      expiresAt: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000),
+    });
+
+    await GuestAccessLink.create({
+      guestId: resolvedGuest.guestId,
+      billId: bill._id,
+      tokenHash: hashToken(rawAccessToken),
+      tokenLast4: rawAccessToken.slice(-4),
+      isActive: true,
+      expiresAt: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000),
+    });
+
+    const inviteTokenQuery = `inviteToken=${encodeURIComponent(rawToken)}`;
+    const basePath =
+      bill.stage === 'active'
+        ? `/guest/access/${rawAccessToken}/pay`
+        : `/guest/access/${rawAccessToken}`;
+
+    redirect(`${basePath}?${inviteTokenQuery}`);
+  }
+
   return (
-    <div className="min-h-screen bg-[#f5f5f5] p-6">
+    <div className="min-h-screen bg-[#fbf7f1] p-6">
+      <header className="mx-auto mb-4 max-w-xl rounded-2xl border border-black/5 bg-white px-4 shadow-sm">
+        <div className="flex h-16 items-center justify-center sm:justify-start">
+          <div className="flex items-center gap-2">
+            <span className="inline-flex h-9 w-9 items-center justify-center rounded-lg bg-[#fb8c00]/10 text-[#fb8c00]">
+              <span className="text-lg">🍊</span>
+            </span>
+            <span className="font-semibold tracking-tight text-[#2f2f2f]">Smart Bill Sharing System</span>
+          </div>
+        </div>
+      </header>
       <div className="mx-auto max-w-xl rounded-2xl bg-white p-6 shadow">
         <h1 className="text-xl font-bold text-[#4a4a4a]">เข้าร่วมบิล</h1>
 

@@ -162,6 +162,12 @@ function CreateBillPageInner() {
   const searchParams = useSearchParams();
   const splitTypeRaw = searchParams.get('type');
   const splitType = (splitTypeRaw as SplitType) || 'equal';
+  const splitTypeLabel =
+    splitType === 'equal'
+      ? 'หารเท่ากัน'
+      : splitType === 'percentage'
+        ? 'หารตามเปอร์เซ็นต์'
+        : 'หารตามรายการ';
 
   const [title, setTitle] = useState('');
   const [totalPrice, setTotalPrice] = useState<number | ''>('');
@@ -345,6 +351,9 @@ function CreateBillPageInner() {
     const picked = e.target.files?.[0];
     if (!picked) return;
 
+    localStorage.removeItem('ocrReceiptImageUrl');
+    localStorage.removeItem('ocrReceiptImagePublicId');
+
     setSelectedFileName(picked.name);
     setUploading(true);
 
@@ -353,6 +362,36 @@ function CreateBillPageInner() {
       const imagePreviewUrl = URL.createObjectURL(compressed);
       setSelectedImagePreview(imagePreviewUrl);
       setOcrImageFile(compressed);
+
+      const token = localStorage.getItem('token');
+      const fd = new FormData();
+      fd.append('file', compressed);
+      if (draftBillId) {
+        fd.append('billId', draftBillId);
+      }
+
+      const uploadRes = await fetch('/api/ocr/upload-receipt', {
+        method: 'POST',
+        headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+        body: fd,
+      });
+
+      if (!uploadRes.ok) {
+        throw new Error('อัปโหลดรูปบิลไม่สำเร็จ');
+      }
+
+      const uploadData = (await uploadRes.json()) as {
+        url?: string;
+        publicId?: string;
+      };
+
+      const receiptImageUrl = uploadData.url || '';
+      const receiptImagePublicId = uploadData.publicId || '';
+
+      if (receiptImageUrl) {
+        localStorage.setItem('ocrReceiptImageUrl', receiptImageUrl);
+        localStorage.setItem('ocrReceiptImagePublicId', receiptImagePublicId);
+      }
     } catch (err: unknown) {
       const errorMsg = err instanceof Error ? err.message : 'เกิดข้อผิดพลาด';
       console.error('Direct upload error:', err);
@@ -645,7 +684,7 @@ function CreateBillPageInner() {
 
   const onRejectOcr = async () => {
     const shouldKeepReceipt = window.confirm(
-      'ไม่ใช้ข้อมูล OCR ใช่ไหม?\n\nกด OK = เก็บรูปบิลไว้ แต่ไม่ใช้ข้อมูล OCR\nกด Cancel = ไม่เก็บทั้งข้อมูล OCR และรูปบิล'
+      'ไม่ใช้ข้อมูล OCR ใช่ไหม?\n\nกด OK = เก็บรูปบิลไว้ แต่ไม่ใช้ข้อมูล OCR\nกด Cancel = ไม่เก็บข้อมูล OCR แต่เก็บรูปบิล'
     );
 
     ocrPreview.setLoading(true);
@@ -1359,26 +1398,26 @@ function CreateBillPageInner() {
       <div className="min-h-screen flex flex-col items-center justify-center p-6 bg-[radial-gradient(circle_at_top_right,#fff5e6_0%,#ffffff_40%,#fff0e0_100%)]">
         <div className="w-full max-w-lg bg-white rounded-2xl shadow-xl p-8 relative">
           <h1 className="text-3xl font-bold mb-4 text-center text-[#4a4a4a]">
-            Add New Bill <span className="text-sm font-normal text-gray-500">({splitType})</span>
+            สร้างบิลใหม่ <span className="text-sm font-normal text-gray-500">({splitTypeLabel})</span>
           </h1>
 
           <div className="border-dashed border-2 border-gray-300 rounded-xl p-8 text-center mb-6">
-            <p className="text-lg text-[#4a4a4a] mb-2">Upload a receipt or drag and drop</p>
-            <p className="text-xs text-gray-400 mb-2">PNG, JPG up to 10MB</p>
+            <p className="text-lg text-[#4a4a4a] mb-2">อัปโหลดรูปบิล หรือ ลากไฟล์มาวาง</p>
+            <p className="text-xs text-gray-400 mb-2">รองรับ PNG, JPG ขนาดไม่เกิน 10MB</p>
 
             {selectedImagePreview ? (
               <div className="mb-4 relative">
                 <div className="relative mb-3 h-64 w-full overflow-hidden rounded-2xl border border-gray-200 bg-white">
                   <Image
                     src={selectedImagePreview}
-                    alt="Receipt preview"
+                    alt="ตัวอย่างรูปบิล"
                     fill
                     unoptimized
                     className="object-contain"
                   />
                 </div>
                 <p className="text-xs text-gray-500">
-                  Selected: <span className="font-medium">{selectedFileName}</span>
+                  ไฟล์ที่เลือก: <span className="font-medium">{selectedFileName}</span>
                 </p>
               </div>
             ) : (
@@ -1395,7 +1434,7 @@ function CreateBillPageInner() {
                 className={btnPrimary}
                 disabled={uploading || submitting}
               >
-                {uploading ? 'Processing...' : '🤖 Scan with OCR'}
+                {uploading ? 'กำลังประมวลผล...' : '🤖 สแกนด้วย OCR'}
               </button>
               <button
                 type="button"
@@ -1403,23 +1442,23 @@ function CreateBillPageInner() {
                 className={btnSecondary}
                 disabled={uploading || submitting}
               >
-                {uploading ? 'Processing...' : '📸 Upload Only'}
+                {uploading ? 'กำลังประมวลผล...' : '📸 อัปโหลดรูปอย่างเดียว'}
               </button>
             </div>
           </div>
 
           <div className="flex items-center justify-center mb-6">
             <hr className="w-1/3 border-[#e0e0e0]" />
-            <span className="mx-2 text-[#4a4a4a] text-sm">OR</span>
+            <span className="mx-2 text-[#4a4a4a] text-sm">หรือ</span>
             <hr className="w-1/3 border-[#e0e0e0]" />
           </div>
 
           <div className="mb-4">
-            <label className="block mb-1 text-sm text-gray-600">Bill Title</label>
+            <label className="block mb-1 text-sm text-gray-600">ชื่อบิล</label>
             <input
               type="text"
               className="w-full p-3 border text-gray-800 placeholder:text-gray-400 border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#fb8c00]"
-              placeholder="e.g., Friday Team Lunch"
+              placeholder="เช่น เลี้ยงข้าวทีมวันศุกร์"
               value={title}
               onChange={(e) => setTitle(e.target.value)}
             />
@@ -1430,18 +1469,18 @@ function CreateBillPageInner() {
               <div key={index} className="mb-4">
                 <div className="flex gap-4">
                   <div className="flex-1">
-                    <label className="block mb-1 text-sm text-gray-600">Items</label>
+                    <label className="block mb-1 text-sm text-gray-600">รายการ</label>
                     <input
                       type="text"
                       className="w-full p-3 border text-gray-800 placeholder:text-gray-400 border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#fb8c00]"
-                      placeholder="e.g., Fried rice"
+                      placeholder="เช่น ข้าวผัด"
                       value={item.items}
                       onChange={(e) => handleInputChange(index, 'items', e.target.value)}
                     />
                   </div>
 
                   <div className="w-20">
-                    <label className="block mb-1 text-sm text-gray-600">Qty</label>
+                    <label className="block mb-1 text-sm text-gray-600">จำนวน</label>
                     <input
                       type="number"
                       min={1}
@@ -1455,7 +1494,7 @@ function CreateBillPageInner() {
                   </div>
 
                   <div className="flex-1">
-                    <label className="block mb-1 text-sm text-gray-600">Price</label>
+                    <label className="block mb-1 text-sm text-gray-600">ราคา</label>
                     <input
                       type="text"
                       inputMode="decimal"
@@ -1489,7 +1528,7 @@ function CreateBillPageInner() {
           </button>
 
           <div className="mb-6 mt-6">
-            <label className="block mb-1 text-sm text-gray-600">Participants</label>
+            <label className="block mb-1 text-sm text-gray-600">ผู้เข้าร่วม</label>
 
             <div className="space-y-3">
               {participants.map((participant, index) => {
@@ -1546,7 +1585,7 @@ function CreateBillPageInner() {
                         <div className="flex items-center gap-2">
                           <span className="font-medium">{participant.name}</span>
                           <span className="text-xs px-2 py-0.5 rounded-full bg-gray-200 text-gray-600">
-                            {participant.kind === 'guest' ? 'Guest joined' : 'Guest slot'}
+                            {participant.kind === 'guest' ? 'Guest เข้าร่วมแล้ว' : 'ช่องสำหรับ Guest'}
                           </span>
                         </div>
                       </div>
@@ -1629,13 +1668,13 @@ function CreateBillPageInner() {
                   className={btnGhost}
                   type="button"
                 >
-                  ➕ เพิ่ม Guest Slot
+                  ➕ เพิ่มช่อง Guest
                 </button>
               ) : null}
 
               {draftBillId ? (
                 <span className="text-xs px-2 py-1 rounded-full bg-orange-50 text-orange-700 border border-orange-200">
-                  Draft created
+                  บันทึกฉบับร่างแล้ว
                 </span>
               ) : null}
             </div>
@@ -1654,7 +1693,7 @@ function CreateBillPageInner() {
           </div>
 
           <div className="mb-6">
-            <label className="block mb-1 text-sm text-gray-600">Total Amount</label>
+            <label className="block mb-1 text-sm text-gray-600">ยอดรวมทั้งหมด</label>
             <input
               type="text"
               inputMode="decimal"
@@ -1666,7 +1705,7 @@ function CreateBillPageInner() {
           </div>
 
           <div className="mb-6">
-            <label className="block mb-1 text-sm text-gray-600">Description</label>
+            <label className="block mb-1 text-sm text-gray-600">รายละเอียดเพิ่มเติม</label>
             <textarea
               className="w-full p-3 border text-gray-800 placeholder:text-gray-400 border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#fb8c00]"
               placeholder="....."
@@ -1751,7 +1790,7 @@ function CreateBillPageInner() {
               type="button"
             >
               <CheckCircleIcon className="w-5 h-5 text-white" />
-              <span>{submitting || creatingInvite ? 'Saving...' : 'Confirm and Save Bill'}</span>
+              <span>{submitting || creatingInvite ? 'กำลังบันทึก...' : 'ยืนยันและบันทึกบิล'}</span>
             </button>
           </div>
         </div>

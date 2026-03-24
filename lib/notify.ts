@@ -177,6 +177,20 @@ function buildLineOwnerDetail(bill: BillLean) {
   return { detail, total, people, paidCount };
 }
 
+function buildParticipantAmountLines(bill: BillLean, ownerId?: mongoose.Types.ObjectId) {
+  const rows = bill.participants.filter((p) => {
+    if (!ownerId) return true;
+    if (!p.userId) return true;
+    return String(p.userId) !== String(ownerId);
+  });
+
+  if (rows.length === 0) return 'ไม่มีลูกบิล';
+
+  return rows
+    .map((p, i) => `${i + 1}. ${p.name || 'ไม่ระบุชื่อ'}: ${formatTHB(Number(p.amount) || 0)}`)
+    .join('\n');
+}
+
 /** ✅ 0) หัวบิลสร้างบิลสำเร็จ */
 export async function notifyBillCreatedOwner(params: { billId: ObjectIdLike; ownerUserId?: ObjectIdLike }) {
   await connectMongoDB();
@@ -204,9 +218,11 @@ export async function notifyBillCreatedOwner(params: { billId: ObjectIdLike; own
   if (!created) return;
 
   const { detail } = buildLineOwnerDetail(bill);
+  const participantLines = buildParticipantAmountLines(bill, ownerId);
   const lineText =
     `✅ สร้างบิลสำเร็จ\n` +
     `บิล: ${bill.title}\n\n` +
+    `ลูกบิลและยอด:\n${participantLines}\n\n` +
     `${detail}\n\n` +
     `เปิดบิลนี้: ${historyBillUrl(billId)}\n` +
     `ถ้ายังไม่ได้ล็อกอิน: ${loginToHistoryBillUrl(billId)}`;
