@@ -15,7 +15,8 @@ type NotificationType =
   | 'BILL_UPDATED'
   | 'BILL_STATUS_CHANGED'
   | 'BILL_CLOSED'
-  | 'DAILY_UNPAID_SUMMARY';
+  | 'DAILY_UNPAID_SUMMARY'
+  | 'FRIEND_REQUEST';
 
 type BillLean = {
   _id: mongoose.Types.ObjectId;
@@ -34,7 +35,47 @@ type BillLean = {
   }>;
 };
 
-const APP_URL = process.env.NEXTAUTH_URL || 'https://smart-bill-sharing.vercel.app';
+const FALLBACK_APP_URL = 'https://smart-bill-sharing.vercel.app';
+
+function normalizeBaseUrl(input: string | undefined): string | null {
+  if (!input) return null;
+  const raw = input.trim();
+  if (!raw) return null;
+
+  const withProtocol = /^https?:\/\//i.test(raw) ? raw : `https://${raw}`;
+
+  try {
+    const u = new URL(withProtocol);
+    const host = u.hostname.toLowerCase();
+
+    // LINE เปิดลิงก์จากมือถือไม่ได้ถ้าเป็น localhost/loopback
+    if (host === 'localhost' || host === '127.0.0.1' || host === '0.0.0.0' || host === '::1') {
+      return null;
+    }
+
+    return `${u.protocol}//${u.host}`;
+  } catch {
+    return null;
+  }
+}
+
+function resolveAppUrl() {
+  const fromPublicAppUrl = normalizeBaseUrl(process.env.PUBLIC_APP_URL);
+  if (fromPublicAppUrl) return fromPublicAppUrl;
+
+  const fromNextPublic = normalizeBaseUrl(process.env.NEXT_PUBLIC_APP_URL);
+  if (fromNextPublic) return fromNextPublic;
+
+  const fromNextAuth = normalizeBaseUrl(process.env.NEXTAUTH_URL);
+  if (fromNextAuth) return fromNextAuth;
+
+  const fromVercel = normalizeBaseUrl(process.env.VERCEL_URL);
+  if (fromVercel) return fromVercel;
+
+  return FALLBACK_APP_URL;
+}
+
+const APP_URL = resolveAppUrl();
 
 function historyBillPath(billId: mongoose.Types.ObjectId) {
   return `/history?billId=${billId.toString()}`;
@@ -55,6 +96,7 @@ const DEFAULT_TYPES: NotificationType[] = [
   'BILL_STATUS_CHANGED',
   'BILL_CLOSED',
   'DAILY_UNPAID_SUMMARY',
+  'FRIEND_REQUEST',
 ];
 
 function toId(v: ObjectIdLike): mongoose.Types.ObjectId {
@@ -490,4 +532,52 @@ export async function notifyBillClosed(params: { billId: ObjectIdLike }) {
       );
     }
   }
+}
+
+export async function notifyFriendRequest(params: {
+  targetUserId: ObjectIdLike;
+  fromUserId: ObjectIdLike;
+}) {
+  await connectMongoDB();
+
+  const targetUserId = toId(params.targetUserId);
+  const fromUserId = toId(params.fromUserId);
+
+  if (String(targetUserId) === String(fromUserId)) return;
+  if (!(await isEnabled(targetUserId, 'FRIEND_REQUEST'))) return;
+
+  const sender = await User.findById(fromUserId).select('name email').lean();
+  if (!sender) return;
+
+  const senderName =
+    (sender as { name?: string; email?: string } | null)?.name?.trim() ||
+    (sender as { name?: string; email?: string } | null)?.email?.trim() ||
+    'ผู้ใช้';
+
+  const existing = await Notification.findOne({
+    userId: targetUserId,
+    type: 'FRIEND_REQUEST',
+    fromUserId,
+    friendRequestStatus: 'pending',
+  })
+    .select('_id')
+    .lean();
+
+  if (!existing) {
+    await Notification.create({
+      userId: targetUserId,
+      type: 'FRIEND_REQUEST',
+      title: `${senderName} ส่งคำขอเพื่อน`,
+      message: `${senderName} ขอเป็นเพื่อนกับคุณ`,
+      fromUserId,
+      friendRequestStatus: 'pending',
+      href: '/friends',
+      isRead: false,
+    });
+  }
+
+  await pushToUserLine(
+    targetUserId.toString(),
+    `👋 คุณมีคำขอเป็นเพื่อนใหม่\nจาก: ${senderName}\n\nเปิดดูและตอบกลับได้ที่: ${APP_URL}/friends`
+  );
 }

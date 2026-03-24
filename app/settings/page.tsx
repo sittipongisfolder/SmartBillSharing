@@ -486,7 +486,8 @@ function NotificationsCard() {
     | 'BILL_CLOSED'
     | 'DAILY_UNPAID_SUMMARY'
     | 'GROUP_MEMBER_CHANGED'
-    | 'GROUP_UPDATED';
+    | 'GROUP_UPDATED'
+    | 'FRIEND_REQUEST';
 
   type Settings = {
     enabledTypes: NotificationType[];
@@ -536,6 +537,7 @@ function NotificationsCard() {
     { key: 'DAILY_UNPAID_SUMMARY', label: 'สรุปยอดค้างรายวัน', desc: 'แจ้งเตือนสรุปยอดค้างทุกวัน + ค้างกี่วัน' },
     { key: 'GROUP_MEMBER_CHANGED', label: 'สมาชิกกลุ่มเปลี่ยนแปลง', desc: 'เพิ่ม/ลบสมาชิกในกลุ่ม' },
     { key: 'GROUP_UPDATED', label: 'กลุ่มถูกแก้ไข', desc: 'เปลี่ยนชื่อกลุ่ม/รูปกลุ่ม' },
+    { key: 'FRIEND_REQUEST', label: 'คำขอเป็นเพื่อน', desc: 'มีคนส่งคำขอเป็นเพื่อนมาให้คุณ' },
   ];
 
   const formatTH = (iso: string) =>

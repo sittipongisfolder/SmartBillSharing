@@ -1,13 +1,19 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getServerSession, DefaultUser } from "next-auth";
 import { authOptions } from "@/lib/authOptions";
-import User from "@/models/user";import Notification from "@/models/notification";import { connectMongoDB } from "@/lib/mongodb";
+import { connectMongoDB } from "@/lib/mongodb";
+import { notifyFriendRequest } from "@/lib/notify";
+import User from "@/models/user";
 
 interface SessionUserWithId extends DefaultUser {
   id: string;
 }
 
 interface SendRequestBody {
+  targetUserId: string;
+}
+
+interface CancelRequestBody {
   targetUserId: string;
 }
 
@@ -97,18 +103,14 @@ export async function POST(req: NextRequest) {
       }
     );
 
-    // ✅ สร้าง notification สำหรับผู้รับคำขอ
-    const currentUserData = await User.findById(session.user.id).select('name');
-    if (currentUserData) {
-      await Notification.create({
-        userId: targetUserId,
-        type: 'FRIEND_REQUEST',
-        title: `${currentUserData.name} ส่งคำขอเพื่อน`,
-        message: `${currentUserData.name} ขอเป็นเพื่อนกับคุณ`,
+    // ส่งแจ้งเตือนแบบ best-effort: หากแจ้งเตือนล้มเหลว ไม่ควรทำให้การส่งคำขอเพื่อนล้มเหลว
+    try {
+      await notifyFriendRequest({
+        targetUserId,
         fromUserId: session.user.id,
-        friendRequestStatus: 'pending',
-        href: '/friends',
       });
+    } catch (notifyError) {
+      console.error("⚠️ Friend request sent but notify failed:", notifyError);
     }
 
     return NextResponse.json({
@@ -118,6 +120,80 @@ export async function POST(req: NextRequest) {
     console.error("❌ Error sending friend request:", error);
     return NextResponse.json(
       { error: "Failed to send friend request" },
+      { status: 500 }
+    );
+  }
+}
+
+// ✅ DELETE /api/friends/request - ยกเลิกคำขอเพื่อนที่ส่งไป
+export async function DELETE(req: NextRequest) {
+  try {
+    const session = (await getServerSession(authOptions)) as {
+      user: SessionUserWithId;
+    } | null;
+
+    if (!session?.user?.id) {
+      return NextResponse.json(
+        { error: "ต้องเข้าสู่ระบบก่อน" },
+        { status: 401 }
+      );
+    }
+
+    const { targetUserId } = (await req.json()) as CancelRequestBody;
+
+    if (!targetUserId) {
+      return NextResponse.json(
+        { error: "ต้องระบุ targetUserId" },
+        { status: 400 }
+      );
+    }
+
+    await connectMongoDB();
+
+    const currentUser = await User.findById(session.user.id).lean();
+    if (!currentUser) {
+      return NextResponse.json(
+        { error: "ไม่พบผู้ใช้งาน" },
+        { status: 404 }
+      );
+    }
+
+    const hasOutgoing = currentUser.friendRequests?.outgoing?.some(
+      (id) => String(id) === targetUserId
+    );
+
+    if (!hasOutgoing) {
+      return NextResponse.json(
+        { error: "ไม่พบคำขอที่ส่งไปยังผู้ใช้นี้" },
+        { status: 400 }
+      );
+    }
+
+    await User.updateOne(
+      { _id: session.user.id },
+      {
+        $pull: {
+          "friendRequests.outgoing": targetUserId,
+        },
+      }
+    );
+
+    await User.updateOne(
+      { _id: targetUserId },
+      {
+        $pull: {
+          "friendRequests.incoming": session.user.id,
+        },
+      }
+    );
+
+    return NextResponse.json({
+      message: "ยกเลิกคำขอเพื่อนสำเร็จ",
+    });
+  } catch (error) {
+    console.error("❌ Error canceling friend request:", error);
+    return NextResponse.json(
+      { error: "Failed to cancel friend request" },
       { status: 500 }
     );
   }

@@ -125,9 +125,67 @@ function htmlToText(input: string) {
     .trim();
 }
 
+function stripMarkdownTableToPlainLines(text: string): string {
+  return text
+    .split(/\r?\n/)
+    .map((line) => {
+      const trimmed = line.trim();
+
+      // Skip markdown table separators: | --- | --- |
+      if (/^\|?[\s\-:]+(?:\|[\s\-:]+)+\|?$/.test(trimmed)) return '';
+
+      // Detect markdown table row: | cell | cell | ... |
+      if (/^\|.*\|\s*$/.test(trimmed)) {
+        const cells = trimmed
+          .replace(/^\|/, '')
+          .replace(/\|\s*$/, '')
+          .split('|')
+          .map((c) => c.trim())
+          .filter(Boolean);
+
+        // Skip header-like rows (e.g. "Description", "Amount", "รายการ")
+        const joined = cells.join(' ');
+        if (
+          /^(description|amount|รายการ|จำนวน|ราคา|items?|qty|price)/i.test(joined)
+        ) {
+          return '';
+        }
+
+        // Skip summary/payment rows: ITEMS, Total, KPLUS, Before VAT, etc.
+        if (
+          /\b(items\s*:\s*\d|total|kplus|before\s*vat|vat\s*\d|amount\s*net|subtotal)/i.test(joined)
+        ) {
+          return '';
+        }
+
+        // Skip rows where most cells are just numbers (payment/summary data)
+        const numberCells = cells.filter((c) => /^\d[\d,.\s]*$/.test(c));
+        if (cells.length >= 3 && numberCells.length >= cells.length - 1) {
+          return '';
+        }
+
+        return cells.join('  ');
+      }
+
+      // Strip stray leading/trailing | from non-table lines
+      let cleaned = trimmed.replace(/\*\*([^*]+)\*\*/g, '$1');
+      cleaned = cleaned.replace(/^\|\s*/, '').replace(/\s*\|$/, '');
+
+      return cleaned;
+    })
+    .join('\n');
+}
+
 function normalizeRawTextForParsing(text: string) {
   let s = (text || "").trim();
   if (!s) return s;
+
+  // Convert literal "\n" (backslash + n) to actual newlines
+  // OCR sometimes returns markdown tables with literal \n instead of real line breaks
+  s = s.replace(/\\n/g, "\n");
+
+  // Convert markdown tables to plain text first
+  s = stripMarkdownTableToPlainLines(s);
 
   const nlCount = (s.match(/\n/g) || []).length;
 
@@ -268,7 +326,9 @@ function extractMerchantCandidates(text: string) {
 }
 
 function sanitizeTitle(title: unknown, rawText: string) {
-  const rawTitle = typeof title === "string" ? cleanSpaces(title) : "";
+  const rawTitle = typeof title === "string"
+    ? cleanSpaces(title.replace(/\*\*([^*]+)\*\*/g, '$1'))
+    : "";
   const titleCandidates = extractMerchantCandidates(rawText);
 
   if (rawTitle) {
@@ -319,6 +379,7 @@ function isBadItemName(name: string) {
     "cashier",
     "receipt",
     "thank you",
+    "see you",
     "date",
     "time",
     "table",
@@ -328,6 +389,16 @@ function isBadItemName(name: string) {
     "kplus",
     "qr",
     "items",
+    "edc",
+    "vat included",
+    "vatable",
+    "powered by",
+    "co.,ltd",
+    "company limited",
+    "tax id",
+    "tax invoice",
+    "staff:",
+    "shop:",
     "รายการสินค้า",
     "วันที่",
     "เวลา",
@@ -338,6 +409,8 @@ function isBadItemName(name: string) {
     "ทอน",
     "ทานที่ร้าน",
     "รับกลับบ้าน",
+    "ค่าบริการ",
+    "ทั้งหมด",
     "take away",
     "dine in",
   ];
@@ -375,6 +448,35 @@ function parseItemsFromText(text: string) {
     "phone",
     "address",
     "thank you",
+    "see you",
+    "co.,ltd",
+    "co.ltd",
+    "company",
+    "limited",
+    "soi ",
+    "road,",
+    "road ",
+    "thailand",
+    "bangkok",
+    "tax id",
+    "tax invoice",
+    "branch",
+    "สาขา",
+    "kplus",
+    "edc",
+    "vat included",
+    "vatable",
+    "powered by",
+    "staff:",
+    "shop:",
+    "no.:",
+    "ทานที่ร้าน",
+    "ชื่อพนักงาน",
+    "เวลาเข้า",
+    "เวลาที่พิมพ์",
+    "แบบสอบถาม",
+    "กรุณาสแกน",
+    "ออกใบกำกับ",
     "รวม",
     "รวมทั้งสิ้น",
     "ยอดรวม",
@@ -388,6 +490,9 @@ function parseItemsFromText(text: string) {
     "วันที่",
     "เวลา",
     "ใบเสร็จ",
+    "ใบกำกับ",
+    "ทั้งหมด",
+    "รายการสินค้า",
   ];
 
   const cutAtFirstSkipWord = (line: string) => {
@@ -408,7 +513,9 @@ function parseItemsFromText(text: string) {
 
   const cleanName = (s: string) =>
     (s || "")
-      .replace(/^\s*\d+[\.\)]\s*/, "")
+      .replace(/^\s*\d+[\.\)]\s*/, "")   // strip "1." or "1)"
+      .replace(/^\s*\d+\s{2,}/, "")        // strip leading qty + 2+ spaces: "1   (Box)..."
+      .replace(/^\s*-\s*/, "")             // strip leading dash: "- (Box)..."
       .replace(/[:\-–—]+$/g, "")
       .trim();
 
@@ -422,6 +529,10 @@ function parseItemsFromText(text: string) {
 
     const line0 = stripTailTaxCode(cut.line);
     if (!line0) continue;
+
+    // Skip discount/negative-price lines
+    if (/^\s*-\s*\d{1,3}(?:,\d{3})*\.\d{2}/.test(line0)) continue;
+    if (/\s-\d{1,3}(?:,\d{3})*\.\d{2}\s*$/.test(line0)) continue;
 
     const hasMoney = /\d{1,3}(?:,\d{3})*\.\d{2}/.test(line0);
     const hasLetters = /[A-Za-z\u0E00-\u0E7F]/.test(line0);
@@ -438,6 +549,41 @@ function parseItemsFromText(text: string) {
     if (hasLetters && !hasMoney) {
       carryName = cleanName(carryName ? `${carryName} ${line0}` : line0);
       continue;
+    }
+
+    // ── QTY-first: "1  (Box)Thai Milk Tea  100.00" ──
+    const mLeadQty = line0.match(
+      /^\s*(\d{1,3})\s{1,}(.*?)\s{1,}(-?\d{1,3}(?:,\d{3})*(?:\.\d{1,2})?)\s*$/,
+    );
+    if (mLeadQty && hasLetters) {
+      const qty = Math.max(1, Math.floor(toNumber(mLeadQty[1], 1)));
+      const raw = cleanName(`${carryName} ${mLeadQty[2] || ""}`.trim());
+      carryName = "";
+      const price = toNumber(mLeadQty[3], -1);
+
+      if (raw && !isBadItemName(raw) && qty > 0 && Number.isFinite(price) && price >= 0) {
+        out.push({ name: raw, qty, price: round2(price) });
+        lastIdx = out.length - 1;
+        continue;
+      }
+    }
+
+    // ── Price-only line paired with carryName ──
+    if (!hasLetters && hasMoney && carryName) {
+      const mPriceOnly = line0.match(
+        /^\s*(-?\d{1,3}(?:,\d{3})*\.\d{2})\s*$/,
+      );
+      if (mPriceOnly) {
+        const name = cleanName(carryName);
+        carryName = "";
+        const price = toNumber(mPriceOnly[1], -1);
+
+        if (name && !isBadItemName(name) && Number.isFinite(price) && price >= 0) {
+          out.push({ name, price: round2(price), qty: 1 });
+          lastIdx = out.length - 1;
+        }
+        continue;
+      }
     }
 
     const mCols = line0.match(
@@ -493,9 +639,10 @@ function parseItemsFromText(text: string) {
   }
 
   return out
+    .filter((it) => cleanSpaces(it.name).length <= 80)
     .map((it) => ({
       ...it,
-      name: cleanSpaces(it.name).slice(0, 120),
+      name: cleanSpaces(it.name).slice(0, 80),
       price: round2(it.price),
       qty: Math.max(1, Math.floor(it.qty)),
     }))
@@ -792,7 +939,7 @@ async function parseBillFromRawTextWithLLM({
   total: number | null;
 }> {
   const system = `
-You are a receipt-to-JSON parser for Thai food bills.
+You are a receipt-to-JSON parser for Thai food/drink/retail bills.
 
 Return ONLY valid JSON.
 No markdown. No code fence. No explanation.
@@ -812,14 +959,17 @@ Schema:
 }
 
 Rules:
-- Extract only actual purchased food/drink item rows.
-- Exclude headers, receipt metadata, queue, cashier, tax ID, VAT, service charge, subtotal, discounts, payment lines, promptpay, QR, cash, change.
-- title = short merchant/store/restaurant name only.
+- Extract only actual purchased food/drink/product item rows.
+- Include add-on options as part of the parent item name (e.g. "Signature Ichigo Cocoa (P) (Sugar 50%, Original Milk)").
+- Exclude headers, receipt metadata, queue number, cashier, tax ID, VAT, service charge, subtotal, discount lines, set/promotion discount rows, payment lines, promptpay, QR, cash, change.
+- Items with 0.00 price that are add-ons/modifiers should NOT be separate items — append them to their parent item name.
+- Items with 0.00 price that are standalone (like complimentary items or free add-ons) CAN be included.
+- title = short merchant/store/restaurant name only. Do NOT include "CO.,LTD" or "COMPANY LIMITED".
 - qty must be integer >= 1.
 - unit_price must be price per unit.
 - If only line total is available, infer unit_price = line_total / qty.
 - line_total should equal qty * unit_price when possible.
-- total = final amount to pay.
+- total = final amount to pay (Grand Total or the last total before payment info).
 - Return numbers only, no commas, no currency symbols.
 `.trim();
 
@@ -890,7 +1040,7 @@ export async function POST(req: Request) {
 
     const ocrModel = process.env.TYPHOON_OCR_MODEL || "typhoon-ocr";
     const textModel =
-      process.env.TYPHOON_TEXT_MODEL || "typhoon-v2.1-12b-instruct";
+      process.env.TYPHOON_TEXT_MODEL || "typhoon-v2.5-30b-a3b-instruct";
 
     const mime = (file.type || "").toLowerCase();
 
@@ -968,6 +1118,14 @@ export async function POST(req: Request) {
     const regexTotal = findTotalFromText(rawText);
     const regexTitle = sanitizeTitle(null, rawText);
 
+    console.log("[OCR] regex parsed", {
+      regexItemCount: regexItems.length,
+      regexTotal,
+      regexTitle,
+      regexItems: regexItems.slice(0, 10),
+      normalizedTextSample: rawText.slice(0, 500),
+    });
+
     // 3) parse ด้วย text model เพิ่มความแม่นยำ
     const llmParsed = await parseBillFromRawTextWithLLM({
       baseUrl,
@@ -1015,7 +1173,14 @@ export async function POST(req: Request) {
       title: response.title,
       items: response.items.length,
       total: response.total,
+      regexItemCount: regexItemsDeduped.length,
+      llmItemCount: llmItems.length,
+      llmLooksReasonable,
     });
+
+    if (response.items.length === 0) {
+      console.warn("[OCR] No items extracted. rawText (first 800 chars):", rawText.slice(0, 800));
+    }
 
     return NextResponse.json({
       ok: true,

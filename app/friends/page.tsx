@@ -100,6 +100,31 @@ function FriendsPageInner() {
     }
   };
 
+  // ✅ Cancel outgoing request
+  const handleCancelOutgoingRequest = async (userId: string) => {
+    try {
+      setActionLoading(userId);
+      const res = await fetch('/api/friends/request', {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ targetUserId: userId }),
+      });
+
+      if (res.ok) {
+        await fetchRequests();
+        alert('ยกเลิกคำขอสำเร็จ');
+      } else {
+        const error = (await res.json().catch(() => null)) as { error?: string } | null;
+        alert(`ข้อผิดพลาด: ${error?.error ?? 'ไม่สามารถยกเลิกคำขอได้'}`);
+      }
+    } catch (error) {
+      console.error('Error canceling outgoing request:', error);
+      alert('ไม่สามารถยกเลิกคำขอได้');
+    } finally {
+      setActionLoading(null);
+    }
+  };
+
   // ✅ Accept request
   const handleAccept = async (userId: string) => {
     try {
@@ -351,9 +376,20 @@ function FriendsPageInner() {
                             {request.email}
                           </p>
                         </div>
-                        <div className="flex items-center gap-2 px-3 py-2 bg-gray-100 rounded-lg text-sm text-gray-600">
-                          <PaperAirplaneIcon className="h-4 w-4" />
-                          รอการตอบ
+                        <div className="flex items-center gap-2">
+                          <div className="flex items-center gap-2 px-3 py-2 bg-gray-100 rounded-lg text-sm text-gray-600">
+                            <PaperAirplaneIcon className="h-4 w-4" />
+                            รอการตอบ
+                          </div>
+                          <button
+                            onClick={() => handleCancelOutgoingRequest(request._id)}
+                            disabled={actionLoading === request._id}
+                            className="inline-flex items-center gap-1 px-3 py-2 bg-red-100 text-red-700 hover:bg-red-200 rounded-lg text-sm transition disabled:opacity-50"
+                            title="ยกเลิกคำขอ"
+                          >
+                            <XMarkIcon className="h-4 w-4" />
+                            ยกเลิกคำขอ
+                          </button>
                         </div>
                       </div>
                     ))}

@@ -21,7 +21,22 @@ type LineImageMessage = {
   originalContentUrl: string;
   previewImageUrl: string;
 };
-type LinePushMessage = LineTextMessage | LineImageMessage;
+type LineUriAction = {
+  type: "uri";
+  label: string;
+  uri: string;
+};
+type LineButtonsTemplate = {
+  type: "buttons";
+  text: string;
+  actions: LineUriAction[];
+};
+type LineTemplateMessage = {
+  type: "template";
+  altText: string;
+  template: LineButtonsTemplate;
+};
+type LinePushMessage = LineTextMessage | LineImageMessage | LineTemplateMessage;
 
 async function lineFetch(path: string, body: unknown) {
   const token = process.env.LINE_CHANNEL_ACCESS_TOKEN;
@@ -62,6 +77,97 @@ export async function pushTextAndImage(lineUserId: string, text: string, imageUr
         originalContentUrl: imageUrl,
         previewImageUrl: imageUrl,
       } satisfies LineImageMessage,
+    ] satisfies LinePushMessage[],
+  };
+  await lineFetch("/message/push", payload);
+}
+
+export async function pushTextWithButton(
+  lineUserId: string,
+  text: string,
+  url: string,
+  buttonLabel = "เปิดลิงก์"
+) {
+  return pushTextWithButtons(lineUserId, text, [{ url, label: buttonLabel }]);
+}
+
+export async function pushTextWithButtons(
+  lineUserId: string,
+  text: string,
+  actions: Array<{ url: string; label: string }>
+) {
+  const uriActions: LineUriAction[] = actions.slice(0, 4).map((a) => ({
+    type: "uri",
+    label: a.label.slice(0, 20),
+    uri: a.url,
+  }));
+
+  if (uriActions.length === 0) {
+    return pushText(lineUserId, text);
+  }
+
+  const payload = {
+    to: lineUserId,
+    messages: [
+      { type: "text", text } satisfies LineTextMessage,
+      {
+        type: "template",
+        altText: "เปิดลิงก์",
+        template: {
+          type: "buttons",
+          text: "กดปุ่มด้านล่างเพื่อเปิดลิงก์",
+          actions: uriActions,
+        } satisfies LineButtonsTemplate,
+      } satisfies LineTemplateMessage,
+    ] satisfies LinePushMessage[],
+  };
+  await lineFetch("/message/push", payload);
+}
+
+export async function pushTextAndImageWithButton(
+  lineUserId: string,
+  text: string,
+  imageUrl: string,
+  url: string,
+  buttonLabel = "เปิดลิงก์"
+) {
+  return pushTextAndImageWithButtons(lineUserId, text, imageUrl, [{ url, label: buttonLabel }]);
+}
+
+export async function pushTextAndImageWithButtons(
+  lineUserId: string,
+  text: string,
+  imageUrl: string,
+  actions: Array<{ url: string; label: string }>
+) {
+  const uriActions: LineUriAction[] = actions.slice(0, 4).map((a) => ({
+    type: "uri",
+    label: a.label.slice(0, 20),
+    uri: a.url,
+  }));
+
+  if (uriActions.length === 0) {
+    return pushTextAndImage(lineUserId, text, imageUrl);
+  }
+
+  const payload = {
+    to: lineUserId,
+    messages: [
+      { type: "text", text } satisfies LineTextMessage,
+      {
+        type: "image",
+        originalContentUrl: imageUrl,
+        previewImageUrl: imageUrl,
+      } satisfies LineImageMessage,
+      {
+        type: "template",
+        altText: "เปิดลิงก์",
+        template: {
+          type: "buttons",
+          text: "กดปุ่มด้านล่างเพื่อเปิดลิงก์",
+          actions: uriActions,
+        } satisfies LineButtonsTemplate,
+      } satisfies LineTemplateMessage,
     ] satisfies LinePushMessage[],
   };
   await lineFetch("/message/push", payload);

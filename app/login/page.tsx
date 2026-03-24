@@ -42,8 +42,20 @@ function LoginContent() {
       await new Promise((resolve) => setTimeout(resolve, 500));
 
       // เรียก API เพื่อดึง session ของผู้ใช้ที่เพิ่งเข้าสู่ระบบ
-      const sessionRes = await fetch('/api/auth/session');
-      const sessionData: { user?: { role?: string } } = await sessionRes.json();
+      const sessionRes = await fetch('/api/auth/session', { cache: 'no-store' });
+      let sessionData: { user?: { role?: string } } | null = null;
+
+      const sessionContentType = sessionRes.headers.get('content-type') ?? '';
+      if (sessionContentType.includes('application/json')) {
+        sessionData = (await sessionRes.json().catch(() => null)) as { user?: { role?: string } } | null;
+      }
+
+      if (!sessionRes.ok) {
+        console.error('Failed to read session after login:', {
+          status: sessionRes.status,
+          contentType: sessionContentType,
+        });
+      }
       
       // ถ้ามี callbackUrl ให้กลับไปปลายทางเดิมก่อน
       if (callbackPath) {

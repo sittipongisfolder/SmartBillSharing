@@ -19,6 +19,7 @@ const ALL_TYPES = [
   'DAILY_UNPAID_SUMMARY',
   'GROUP_MEMBER_CHANGED',
   'GROUP_UPDATED',
+  'FRIEND_REQUEST',
 ] as const satisfies readonly NotificationType[];
 
 type SettingsDTO = {
