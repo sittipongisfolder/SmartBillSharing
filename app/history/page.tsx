@@ -2,7 +2,7 @@
 /* eslint-disable @next/next/no-img-element */
 
 
-import { useCallback, useEffect, useMemo, useRef, useState, Fragment } from 'react';
+import { Suspense, useCallback, useEffect, useMemo, useRef, useState, Fragment } from 'react';
 import { useSession } from 'next-auth/react';
 import Link from 'next/link';
 import { useSearchParams } from 'next/navigation';
@@ -579,7 +579,75 @@ function EditBillModal({
 
 /** ------------------ Page ------------------ */
 
-export default function HistoryPage() {
+function HistoryPageFallback() {
+  return (
+    <div className="min-h-screen bg-[radial-gradient(circle_at_top_right,#fff5e6_0%,#ffffff_40%,#fff0e0_100%)]">
+      <div className="sticky top-0 z-10 bg-white border-b">
+        <div className="mx-auto max-w-6xl px-6 h-16 flex items-center justify-between">
+          <div className="h-8 w-32 bg-gray-200 rounded-lg animate-pulse" />
+        </div>
+      </div>
+
+      <div className="max-w-6xl mx-auto px-4 py-6">
+        <div className="flex items-center gap-6 mb-4">
+          <div className="h-6 w-20 bg-gray-200 rounded-lg animate-pulse" />
+          <div className="h-6 w-20 bg-gray-200 rounded-lg animate-pulse" />
+        </div>
+
+        <div className="bg-white rounded-2xl shadow-sm border p-4 mb-4">
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+            <div className="h-10 bg-gray-200 rounded-lg animate-pulse" />
+            <div className="h-10 bg-gray-200 rounded-lg animate-pulse" />
+            <div className="h-10 bg-gray-200 rounded-lg animate-pulse" />
+          </div>
+        </div>
+
+        <div className="bg-white rounded-2xl shadow-sm border overflow-hidden">
+          <div className="overflow-x-auto">
+            <table className="min-w-full">
+              <thead className="bg-gray-50">
+                <tr>
+                  <th className="px-5 py-4 h-10" />
+                  <th className="px-5 py-4 h-10" />
+                  <th className="px-5 py-4 h-10" />
+                  <th className="px-5 py-4 h-10" />
+                  <th className="px-5 py-4 h-10" />
+                  <th className="px-5 py-4 h-10" />
+                </tr>
+              </thead>
+              <tbody className="divide-y">
+                {[...Array(5)].map((_, i) => (
+                  <tr key={i}>
+                    <td className="px-5 py-4">
+                      <div className="h-6 bg-gray-200 rounded animate-pulse" />
+                    </td>
+                    <td className="px-5 py-4">
+                      <div className="h-6 bg-gray-200 rounded animate-pulse" />
+                    </td>
+                    <td className="px-5 py-4">
+                      <div className="h-6 bg-gray-200 rounded animate-pulse" />
+                    </td>
+                    <td className="px-5 py-4">
+                      <div className="h-6 bg-gray-200 rounded animate-pulse" />
+                    </td>
+                    <td className="px-5 py-4">
+                      <div className="h-6 bg-gray-200 rounded animate-pulse" />
+                    </td>
+                    <td className="px-5 py-4">
+                      <div className="h-6 bg-gray-200 rounded animate-pulse" />
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function HistoryPageContent() {
   const { data: session, status: sessionStatus } = useSession();
   const myId = (session?.user as { id?: string } | undefined)?.id;
   const searchParams = useSearchParams();
@@ -845,73 +913,7 @@ export default function HistoryPage() {
   };
 
   if (sessionStatus === 'loading') {
-    return (
-      <div className="min-h-screen bg-[radial-gradient(circle_at_top_right,#fff5e6_0%,#ffffff_40%,#fff0e0_100%)]">
-        {/* Top Bar Skeleton */}
-        <div className="sticky top-0 z-10 bg-white border-b">
-          <div className="mx-auto max-w-6xl px-6 h-16 flex items-center justify-between">
-            <div className="h-8 w-32 bg-gray-200 rounded-lg animate-pulse" />
-          </div>
-        </div>
-
-        {/* Content Skeleton */}
-        <div className="max-w-6xl mx-auto px-4 py-6">
-          <div className="flex items-center gap-6 mb-4">
-            <div className="h-6 w-20 bg-gray-200 rounded-lg animate-pulse" />
-            <div className="h-6 w-20 bg-gray-200 rounded-lg animate-pulse" />
-          </div>
-
-          <div className="bg-white rounded-2xl shadow-sm border p-4 mb-4">
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-              <div className="h-10 bg-gray-200 rounded-lg animate-pulse" />
-              <div className="h-10 bg-gray-200 rounded-lg animate-pulse" />
-              <div className="h-10 bg-gray-200 rounded-lg animate-pulse" />
-            </div>
-          </div>
-
-          <div className="bg-white rounded-2xl shadow-sm border overflow-hidden">
-            <div className="overflow-x-auto">
-              <table className="min-w-full">
-                <thead className="bg-gray-50">
-                  <tr>
-                    <th className="px-5 py-4 h-10" />
-                    <th className="px-5 py-4 h-10" />
-                    <th className="px-5 py-4 h-10" />
-                    <th className="px-5 py-4 h-10" />
-                    <th className="px-5 py-4 h-10" />
-                    <th className="px-5 py-4 h-10" />
-                  </tr>
-                </thead>
-                <tbody className="divide-y">
-                  {[...Array(5)].map((_, i) => (
-                    <tr key={i}>
-                      <td className="px-5 py-4">
-                        <div className="h-6 bg-gray-200 rounded animate-pulse" />
-                      </td>
-                      <td className="px-5 py-4">
-                        <div className="h-6 bg-gray-200 rounded animate-pulse" />
-                      </td>
-                      <td className="px-5 py-4">
-                        <div className="h-6 bg-gray-200 rounded animate-pulse" />
-                      </td>
-                      <td className="px-5 py-4">
-                        <div className="h-6 bg-gray-200 rounded animate-pulse" />
-                      </td>
-                      <td className="px-5 py-4">
-                        <div className="h-6 bg-gray-200 rounded animate-pulse" />
-                      </td>
-                      <td className="px-5 py-4">
-                        <div className="h-6 bg-gray-200 rounded animate-pulse" />
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          </div>
-        </div>
-      </div>
-    );
+    return <HistoryPageFallback />;
   }
   if (!session) return <p className="p-4 text-red-500">กรุณาเข้าสู่ระบบเพื่อดูประวัติ</p>;
 
@@ -1474,5 +1476,13 @@ export default function HistoryPage() {
         </p>
       </div>
     </div>
+  );
+}
+
+export default function HistoryPage() {
+  return (
+    <Suspense fallback={<HistoryPageFallback />}>
+      <HistoryPageContent />
+    </Suspense>
   );
 }
