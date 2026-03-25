@@ -2,7 +2,7 @@
 /* eslint-disable @next/next/no-img-element */
 
 
-import { Suspense, useCallback, useEffect, useMemo, useRef, useState, Fragment } from 'react';
+import { Suspense, useCallback, useEffect, useMemo, useRef, useState, Fragment, Dispatch, SetStateAction } from 'react';
 import { useSession } from 'next-auth/react';
 import Link from 'next/link';
 import { useSearchParams } from 'next/navigation';
@@ -69,6 +69,19 @@ interface UserRow {
   name: string;
   email: string;
 }
+
+type SlipModalState = {
+  name: string;
+  imageUrl: string;
+  reference?: string;
+  checkedAt?: string;
+  verified?: boolean;
+};
+
+type ReceiptModalState = {
+  title: string;
+  imageUrl: string;
+};
 
 function normalizeId(v: unknown): string | undefined {
   if (!v) return undefined;
@@ -165,6 +178,203 @@ function StatusBadge({ status }: { status: PaymentStatus }) {
       />
       {label}
     </span>
+  );
+}
+
+function BillExpandedContent({
+  billId,
+  detail,
+  detailBillStatus,
+  detailIsCreator,
+  detailOwnerId,
+  copiedInviteParticipantKey,
+  handleCopyGuestInviteLink,
+  setReceiptModal,
+  canViewSlipSection,
+  slipTargets,
+  setSlipModal,
+}: {
+  billId: string;
+  detail: Bill;
+  detailBillStatus: PaymentStatus;
+  detailIsCreator: boolean;
+  detailOwnerId?: string;
+  copiedInviteParticipantKey: string | null;
+  handleCopyGuestInviteLink: (billId: string, participantId: string) => Promise<void>;
+  setReceiptModal: Dispatch<SetStateAction<ReceiptModalState | null>>;
+  canViewSlipSection: boolean;
+  slipTargets: Participant[];
+  setSlipModal: Dispatch<SetStateAction<SlipModalState | null>>;
+}) {
+  return (
+    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+      <div className="bg-white rounded-2xl border p-4">
+        <div className="flex items-center justify-between gap-2">
+          <div className="font-semibold text-gray-800">รายละเอียดบิล</div>
+          <StatusBadge status={detailBillStatus} />
+        </div>
+        <div className="mt-2 text-sm text-gray-700 space-y-1">
+          <div>
+            <span className="text-gray-500">ชื่อบิล:</span> {detail.title}
+          </div>
+          <div>
+            <span className="text-gray-500">ประเภทการแบ่ง:</span> {String(detail.splitType)}
+          </div>
+          <div>
+            <span className="text-gray-500">ยอดรวม:</span> {formatMoneyTHB(detail.totalPrice)}
+          </div>
+          {detail.description ? (
+            <div>
+              <span className="text-gray-500">คำอธิบาย:</span> {detail.description}
+            </div>
+          ) : null}
+        </div>
+      </div>
+
+      <div className="bg-white rounded-2xl border p-4">
+        <div className="font-semibold text-gray-800 mb-2">ผู้ร่วมบิล</div>
+        <div className="space-y-2">
+          {detail.participants.map((p, i) => {
+            const pid = normalizeId(p.userId);
+            const gid = normalizeId(p.guestId);
+            const participantId = normalizeId(p._id);
+            const isOwnerRow = !!detailOwnerId && pid === detailOwnerId;
+            const isGuestRow = (p.kind === 'guest' || p.kind === 'guest_placeholder' || (!!gid && !pid)) && !isOwnerRow;
+            const inviteKey = participantId ? `${billId}:${participantId}` : '';
+
+            const ps = normalizeStatus(p.paymentStatus) ?? 'unpaid';
+
+            return (
+              <div key={`${pid ?? gid ?? 'guest'}-${i}`} className="flex items-center justify-between gap-2 text-sm">
+                <div className="text-gray-800 flex items-center gap-2 flex-wrap">
+                  <span>{p.name}</span>
+                  {isOwnerRow ? <span className="text-xs text-gray-400"> (เจ้าของบิล)</span> : null}
+                  {!isOwnerRow && isGuestRow ? (
+                    <span className="text-xs text-gray-400"> (ผู้ร่วมบิล)</span>
+                  ) : null}
+                  {detailIsCreator && isGuestRow && participantId ? (
+                    <button
+                      type="button"
+                      onClick={() => void handleCopyGuestInviteLink(billId, participantId)}
+                      className={`rounded-lg border px-2 py-1 text-xs transition ${copiedInviteParticipantKey === inviteKey
+                          ? 'border-green-300 bg-green-50 text-green-700'
+                          : 'border-blue-200 bg-blue-50 text-blue-700 hover:bg-blue-100'
+                        }`}
+                    >
+                      {copiedInviteParticipantKey === inviteKey ? 'คัดลอกแล้ว' : 'คัดลอกลิงก์'}
+                    </button>
+                  ) : null}
+                </div>
+
+                <div className="flex items-center gap-2">
+                  <span className="text-gray-600">{formatMoneyTHB(p.amount)}</span>
+                  <StatusBadge status={ps} />
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+
+      {detail.receiptImageUrl ? (
+        <div className="bg-white rounded-2xl border p-4 md:col-span-2">
+          <div className="flex items-center justify-between">
+            <div className="font-semibold text-gray-800">รูปบิล</div>
+
+            <button
+              type="button"
+              onClick={() =>
+                setReceiptModal({
+                  title: detail.title,
+                  imageUrl: detail.receiptImageUrl!,
+                })
+              }
+              className="px-3 py-2 rounded-xl border text-gray-900 bg-white hover:bg-gray-50 text-sm"
+            >
+              ดูบิล
+            </button>
+          </div>
+        </div>
+      ) : null}
+
+      {canViewSlipSection ? (
+        <div className="bg-white rounded-2xl border p-4 md:col-span-2">
+          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-1 mb-2">
+            <div className="font-semibold text-gray-800">
+              {detailIsCreator ? 'สลิปที่อัปโหลด' : 'สลิปของฉัน'}
+            </div>
+            <div className="text-xs text-gray-500">
+              {detailIsCreator ? 'หัวบิล: เห็นสลิปทุกคน' : 'ลูกบิล: เห็นเฉพาะของตัวเอง'}
+            </div>
+          </div>
+
+          {slipTargets.length === 0 ? (
+            <div className="text-sm text-gray-500">ไม่พบข้อมูลสลิป</div>
+          ) : (
+            <div className="space-y-2">
+              {slipTargets.map((p, idx) => {
+                const slip = p.slipInfo;
+                const hasSlip = !!slip?.imageUrl;
+
+                return (
+                  <div key={idx} className="flex items-center justify-between gap-2 text-sm border rounded-xl px-3 py-2">
+                    <div className="text-gray-800">
+                      {detailIsCreator ? p.name : 'ฉัน'}
+                      <div className="text-xs text-gray-500">
+                        {slip?.reference ? `ref: ${slip.reference}` : 'ยังไม่มี ref'}
+                        {slip?.checkedAt ? ` • ${formatDateTimeTH(String(slip.checkedAt))}` : ''}
+                      </div>
+                    </div>
+
+                    <div className="flex items-center gap-2">
+                      <span className={`text-xs font-semibold ${slip?.verified ? 'text-green-700' : 'text-gray-500'}`}>
+                        {hasSlip ? (slip?.verified ? 'ยืนยันแล้ว' : 'อัปโหลดแล้ว') : 'ยังไม่มีสลิป'}
+                      </span>
+
+                      {hasSlip ? (
+                        <button
+                          type="button"
+                          onClick={() =>
+                            setSlipModal({
+                              name: detailIsCreator ? p.name : 'ฉัน',
+                              imageUrl: String(slip.imageUrl),
+                              reference: slip.reference,
+                              checkedAt: slip.checkedAt ? String(slip.checkedAt) : undefined,
+                              verified: slip.verified,
+                            })
+                          }
+                          className="px-3 py-2 rounded-xl border text-gray-900 bg-white hover:bg-gray-50 text-sm"
+                        >
+                          ดูสลิป
+                        </button>
+                      ) : (
+                        <span className="text-xs text-gray-400">ยังไม่อัปโหลด</span>
+                      )}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      ) : null}
+
+      <div className="bg-white rounded-2xl border p-4 md:col-span-2">
+        <div className="font-semibold text-gray-800 mb-2">รายการอาหาร</div>
+        {detail.items && detail.items.length ? (
+          <div className="divide-y">
+            {detail.items.map((it, idx) => (
+              <div key={idx} className="py-2 flex items-center justify-between text-sm">
+                <div className="text-gray-800">{it.items}</div>
+                <div className="text-gray-700 font-medium">{formatMoneyTHB(it.price)}</div>
+              </div>
+            ))}
+          </div>
+        ) : (
+          <div className="text-sm text-gray-500">ไม่มีรายการอาหาร</div>
+        )}
+      </div>
+    </div>
   );
 }
 
@@ -679,18 +889,9 @@ function HistoryPageContent() {
   const [copiedInviteParticipantKey, setCopiedInviteParticipantKey] = useState<string | null>(null);
 
   // ✅ Slip modal
-  const [slipModal, setSlipModal] = useState<{
-    name: string;
-    imageUrl: string;
-    reference?: string;
-    checkedAt?: string;
-    verified?: boolean;
-  } | null>(null);
+  const [slipModal, setSlipModal] = useState<SlipModalState | null>(null);
 
-  const [receiptModal, setReceiptModal] = useState<{
-    title: string;
-    imageUrl: string;
-  } | null>(null);
+  const [receiptModal, setReceiptModal] = useState<ReceiptModalState | null>(null);
 
   const fetchBills = async (showLoading = true) => {
     try {
@@ -836,7 +1037,11 @@ function HistoryPageContent() {
     handledTargetBillRef.current = targetBillId;
 
     requestAnimationFrame(() => {
-      document.getElementById(`history-bill-${targetBillId}`)?.scrollIntoView({
+      const mobileEl = document.getElementById(`history-bill-mobile-${targetBillId}`);
+      const desktopEl = document.getElementById(`history-bill-desktop-${targetBillId}`);
+      const targetEl = mobileEl && mobileEl.offsetParent !== null ? mobileEl : desktopEl;
+
+      targetEl?.scrollIntoView({
         behavior: 'smooth',
         block: 'center',
       });
@@ -1007,10 +1212,10 @@ function HistoryPageContent() {
 
       {/* Top Bar */}
       <div className="sticky top-0 z-10 bg-white border-b">
-        <div className="mx-auto max-w-6xl px-6 h-16 flex items-center justify-between">
+        <div className="mx-auto max-w-6xl px-4 sm:px-6 h-16 flex items-center justify-between">
           <div className="flex items-center gap-3">
             <div>
-              <h1 className="text-xl font-bold text-[#4a4a4a]">ประวัติ/สถานะบิล</h1>
+              <h1 className="text-lg sm:text-xl font-bold text-[#4a4a4a]">ประวัติ/สถานะบิล</h1>
             </div>
           </div>
         </div>
@@ -1027,11 +1232,13 @@ function HistoryPageContent() {
       {/* Content */}
       <div className="max-w-6xl mx-auto px-4 py-6">
         {/* Tabs */}
-        <div className="flex items-center gap-6 mb-4">
+        <div className="mb-4 grid grid-cols-2 gap-2 rounded-2xl border bg-white p-1 w-full sm:w-fit">
           <button
             type="button"
             onClick={() => setActiveTab('all')}
-            className={`pb-2 text-sm font-semibold ${activeTab === 'all' ? 'text-[#fb8c00] border-b-2 border-[#fb8c00]' : 'text-gray-500 hover:text-gray-700'
+            className={`rounded-xl px-3 py-2.5 text-sm font-semibold transition ${activeTab === 'all'
+                ? 'bg-[#fff3e0] text-[#fb8c00] border border-[#ffd6a1]'
+                : 'text-gray-500 hover:text-gray-700 hover:bg-gray-50'
               }`}
           >
             บิลทั้งหมด
@@ -1039,7 +1246,9 @@ function HistoryPageContent() {
           <button
             type="button"
             onClick={() => setActiveTab('my')}
-            className={`pb-2 text-sm font-semibold ${activeTab === 'my' ? 'text-[#fb8c00] border-b-2 border-[#fb8c00]' : 'text-gray-500 hover:text-gray-700'
+            className={`rounded-xl px-3 py-2.5 text-sm font-semibold transition ${activeTab === 'my'
+                ? 'bg-[#fff3e0] text-[#fb8c00] border border-[#ffd6a1]'
+                : 'text-gray-500 hover:text-gray-700 hover:bg-gray-50'
               }`}
           >
             บิลของฉัน
@@ -1088,9 +1297,156 @@ function HistoryPageContent() {
           </div>
         </div>
 
-        {/* Table */}
+        {/* Bills */}
         <div className="bg-white rounded-2xl shadow-sm border overflow-hidden">
-          <div className="overflow-x-auto">
+          <div className="md:hidden divide-y">
+            {loading ? (
+              <div className="px-4 py-10 text-center text-gray-500">⏳ กำลังโหลด...</div>
+            ) : paged.length === 0 ? (
+              <div className="px-4 py-10 text-center text-gray-500">ไม่พบบิล</div>
+            ) : (
+              paged.map((bill) => {
+                const billId = String(bill._id);
+
+                const createdById = normalizeId(bill.createdBy);
+                const createdByObj = typeof bill.createdBy === 'object' ? bill.createdBy : undefined;
+
+                const isCreator = !!myId && createdById === myId;
+                const me = getMyParticipant(bill, myId);
+                const isParticipant = !!me;
+
+                const billerName = myId && createdById === myId ? 'คุณ' : createdByObj?.name ?? 'Unknown';
+                const myShare = getMyShare(bill, myId);
+
+                const myStatus = getMyStatus(bill, myId);
+                const billStatus = getBillStatus(bill);
+                const statusToShow = isCreator ? billStatus : myStatus;
+
+                const showPayNow = isParticipant && !isCreator && myStatus === 'unpaid';
+
+                const open = expandedId === billId;
+
+                const ownerId = normalizeId(bill.createdBy);
+                const others = bill.participants.filter((p) => normalizeId(p.userId) !== ownerId);
+                const paidCount = others.filter((p) => (normalizeStatus(p.paymentStatus) ?? 'unpaid') === 'paid').length;
+
+                const detail = detailById[billId] ?? bill;
+                const detailOwnerId = normalizeId(detail.createdBy);
+
+                const detailIsCreator = !!myId && normalizeId(detail.createdBy) === myId;
+                const detailBillStatus = getBillStatus(detail);
+
+                const viewerIsParticipant =
+                  !!myId && detail.participants.some((p) => normalizeId(p.userId) === myId);
+
+                const canViewSlipSection = detailIsCreator || viewerIsParticipant;
+
+                const slipTargets = (detail.participants ?? []).filter((p) => {
+                  const pid = normalizeId(p.userId);
+                  const gid = normalizeId(p.guestId);
+                  const isOwnerRow = !!detailOwnerId && pid === detailOwnerId;
+
+                  if (detailIsCreator) {
+                    return !isOwnerRow && (!!pid || !!gid);
+                  }
+
+                  return !!myId && !!pid && pid === myId;
+                });
+
+                return (
+                  <article id={`history-bill-mobile-${billId}`} key={billId} className="p-4 bg-white">
+                    <div className="flex items-start justify-between gap-3">
+                      <div>
+                        <div className="text-sm font-semibold text-gray-900">{bill.title}</div>
+                        <div className="text-xs text-gray-500 mt-0.5">{formatDateTimeTH(bill.createdAt)}</div>
+                      </div>
+                      <StatusBadge status={statusToShow} />
+                    </div>
+
+                    <div className="mt-3 grid grid-cols-2 gap-2 text-sm">
+                      <div className="rounded-xl bg-gray-50 px-3 py-2">
+                        <div className="text-[11px] text-gray-500">ยอดรวม</div>
+                        <div className="font-semibold text-gray-900">{formatMoneyTHB(bill.totalPrice)}</div>
+                      </div>
+                      <div className="rounded-xl bg-gray-50 px-3 py-2">
+                        <div className="text-[11px] text-gray-500">ยอดของคุณ</div>
+                        <div className="font-semibold text-gray-900">{myShare == null ? '-' : formatMoneyTHB(myShare)}</div>
+                      </div>
+                    </div>
+
+                    <div className="mt-2 text-xs text-gray-600">
+                      ผู้สร้างบิล: <span className="font-medium text-gray-800">{billerName}</span>
+                      {isCreator ? <span className="text-gray-500"> (ชำระครบ {paidCount}/{others.length})</span> : null}
+                    </div>
+
+                    <div className="mt-3 grid grid-cols-2 gap-2">
+                      {showPayNow ? (
+                        <Link
+                          href={`/bills/${bill._id}/pay`}
+                          className="col-span-2 inline-flex items-center justify-center gap-1 px-4 py-2.5 rounded-xl bg-[#fb8c00] text-white text-sm font-semibold hover:bg-[#e65100] transition"
+                        >
+                          ชำระตอนนี้
+                        </Link>
+                      ) : null}
+
+                      {isCreator ? (
+                        <button
+                          type="button"
+                          onClick={() => openEdit(bill)}
+                          className="inline-flex items-center justify-center gap-1 px-3 py-2.5 rounded-xl border text-sm text-gray-700 bg-white hover:bg-gray-50 transition"
+                        >
+                          <PencilSquareIcon className="h-4 w-4" /> แก้ไข
+                        </button>
+                      ) : null}
+
+                      {isCreator ? (
+                        <button
+                          type="button"
+                          onClick={() => handleDelete(bill._id)}
+                          className="inline-flex items-center justify-center gap-1 px-3 py-2.5 rounded-xl border text-sm text-gray-700 bg-white hover:bg-gray-50 transition"
+                        >
+                          <TrashIcon className="h-4 w-4" /> ลบ
+                        </button>
+                      ) : null}
+
+                      <button
+                        type="button"
+                        onClick={() => void toggleExpanded(billId)}
+                        className="col-span-2 inline-flex items-center justify-center gap-1 px-3 py-2.5 rounded-xl border text-sm bg-white transition"
+                      >
+                        {open ? 'ซ่อนรายละเอียด' : 'ดูรายละเอียด'}
+                        <ChevronDownIcon className={`h-4 w-4 text-gray-600 transition ${open ? 'rotate-180' : ''}`} />
+                      </button>
+                    </div>
+
+                    {open ? (
+                      <div className="mt-3 rounded-2xl bg-gray-50/70 p-3">
+                        {detailLoadingId === billId && !detailById[billId] ? (
+                          <div className="text-sm text-gray-500 py-4">⏳ กำลังโหลดรายละเอียดบิล...</div>
+                        ) : (
+                          <BillExpandedContent
+                            billId={billId}
+                            detail={detail}
+                            detailBillStatus={detailBillStatus}
+                            detailIsCreator={detailIsCreator}
+                            detailOwnerId={detailOwnerId}
+                            copiedInviteParticipantKey={copiedInviteParticipantKey}
+                            handleCopyGuestInviteLink={handleCopyGuestInviteLink}
+                            setReceiptModal={setReceiptModal}
+                            canViewSlipSection={canViewSlipSection}
+                            slipTargets={slipTargets}
+                            setSlipModal={setSlipModal}
+                          />
+                        )}
+                      </div>
+                    ) : null}
+                  </article>
+                );
+              })
+            )}
+          </div>
+
+          <div className="hidden md:block overflow-x-auto">
             <table className="min-w-full text-sm">
               <thead className="bg-gray-50 text-gray-600">
                 <tr>
@@ -1142,7 +1498,6 @@ function HistoryPageContent() {
                     const others = bill.participants.filter((p) => normalizeId(p.userId) !== ownerId);
                     const paidCount = others.filter((p) => (normalizeStatus(p.paymentStatus) ?? 'unpaid') === 'paid').length;
 
-                    // ✅ ถ้าเปิดแล้ว ใช้ detail จาก API (จะมี slipInfo ครบกว่า)
                     const detail = detailById[billId] ?? bill;
                     const detailOwnerId = normalizeId(detail.createdBy);
 
@@ -1166,10 +1521,9 @@ function HistoryPageContent() {
                       return !!myId && !!pid && pid === myId;
                     });
 
-
                     return (
                       <Fragment key={billId}>
-                        <tr id={`history-bill-${billId}`} className="hover:bg-gray-50 transition">
+                        <tr id={`history-bill-desktop-${billId}`} className="hover:bg-gray-50 transition">
                           <td className="px-5 py-4 text-gray-700">{formatDateTimeTH(bill.createdAt)}</td>
                           <td className="px-5 py-4 text-gray-700">{formatMoneyTHB(bill.totalPrice)}</td>
                           <td className="px-5 py-4 font-semibold text-gray-900">
@@ -1250,180 +1604,19 @@ function HistoryPageContent() {
                               {detailLoadingId === billId && !detailById[billId] ? (
                                 <div className="text-sm text-gray-500 py-6">⏳ กำลังโหลดรายละเอียดบิล...</div>
                               ) : (
-                                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                                  <div className="bg-white rounded-2xl border p-4">
-                                    <div className="flex items-center justify-between">
-                                      <div className="font-semibold text-gray-800">รายละเอียดบิล</div>
-                                      <StatusBadge status={detailBillStatus} />
-                                    </div>
-                                    <div className="mt-2 text-sm text-gray-700 space-y-1">
-                                      <div>
-                                        <span className="text-gray-500">ชื่อบิล:</span> {detail.title}
-                                      </div>
-                                      <div>
-                                        <span className="text-gray-500">ประเภทการแบ่ง:</span> {String(detail.splitType)}
-                                      </div>
-                                      <div>
-                                        <span className="text-gray-500">ยอดรวม:</span> {formatMoneyTHB(detail.totalPrice)}
-                                      </div>
-                                      {detail.description ? (
-                                        <div>
-                                          <span className="text-gray-500">คำอธิบาย:</span> {detail.description}
-                                        </div>
-                                      ) : null}
-                                    </div>
-                                  </div>
-
-                                  <div className="bg-white rounded-2xl border p-4">
-                                    <div className="font-semibold text-gray-800 mb-2">ผู้ร่วมบิล</div>
-                                    <div className="space-y-2">
-                                      {detail.participants.map((p, i) => {
-                                        const pid = normalizeId(p.userId);
-                                        const gid = normalizeId(p.guestId);
-                                        const participantId = normalizeId(p._id);
-                                        const isOwnerRow = !!detailOwnerId && pid === detailOwnerId;
-                                        const isGuestRow = (p.kind === 'guest' || p.kind === 'guest_placeholder' || (!!gid && !pid)) && !isOwnerRow;
-                                        const inviteKey = participantId ? `${billId}:${participantId}` : '';
-
-                                        const ps = normalizeStatus(p.paymentStatus) ?? 'unpaid';
-
-                                        return (
-                                          <div key={`${pid ?? gid ?? 'guest'}-${i}`} className="flex items-center justify-between text-sm">
-                                            <div className="text-gray-800 flex items-center gap-2 flex-wrap">
-                                              <span>{p.name}</span>
-                                              {isOwnerRow ? <span className="text-xs text-gray-400"> (เจ้าของบิล)</span> : null}
-                                              {!isOwnerRow && isGuestRow ? (
-                                                <span className="text-xs text-gray-400"> (ผู้ร่วมบิล)</span>
-                                              ) : null}
-                                              {detailIsCreator && isGuestRow && participantId ? (
-                                                <button
-                                                  type="button"
-                                                  onClick={() => void handleCopyGuestInviteLink(billId, participantId)}
-                                                  className={`rounded-lg border px-2 py-1 text-xs transition ${copiedInviteParticipantKey === inviteKey
-                                                      ? 'border-green-300 bg-green-50 text-green-700'
-                                                      : 'border-blue-200 bg-blue-50 text-blue-700 hover:bg-blue-100'
-                                                    }`}
-                                                >
-                                                  {copiedInviteParticipantKey === inviteKey ? 'คัดลอกแล้ว' : 'คัดลอกลิงก์'}
-                                                </button>
-                                              ) : null}
-                                            </div>
-
-                                            <div className="flex items-center gap-2">
-                                              <span className="text-gray-600">{formatMoneyTHB(p.amount)}</span>
-                                              <StatusBadge status={ps} />
-                                            </div>
-                                          </div>
-                                        );
-                                      })}
-                                    </div>
-                                  </div>
-
-                                  {/* ✅ Receipt Image Display */}
-                                  {detail.receiptImageUrl ? (
-                                    <div className="bg-white rounded-2xl border p-4 md:col-span-2">
-                                      <div className="flex items-center justify-between">
-                                        <div className="font-semibold text-gray-800">รูปบิล</div>
-
-                                        <button
-                                          type="button"
-                                          onClick={() =>
-                                            setReceiptModal({
-                                              title: detail.title,
-                                              imageUrl: detail.receiptImageUrl!,
-                                            })
-                                          }
-                                          className="px-3 py-2 rounded-xl border text-gray-900 bg-white hover:bg-gray-50 text-sm"
-                                        >
-                                          ดูบิล
-                                        </button>
-                                      </div>
-                                    </div>
-                                  ) : null}
-
-                                  {/* ✅ Invite link (เฉพาะเจ้าของบิล) */}
-
-
-                                  {/* ✅ ส่วนดูสลิป (หัวบิลเห็นทุกคน / ลูกบิลเห็นของตัวเอง) */}
-                                  {canViewSlipSection ? (
-                                    <div className="bg-white rounded-2xl border p-4 md:col-span-2">
-                                      <div className="flex items-center justify-between mb-2">
-                                        <div className="font-semibold text-gray-800">
-                                          {detailIsCreator ? 'สลิปที่อัปโหลด' : 'สลิปของฉัน'}
-                                        </div>
-                                        <div className="text-xs text-gray-500">
-                                          {detailIsCreator ? 'หัวบิล: เห็นสลิปทุกคน' : 'ลูกบิล: เห็นเฉพาะของตัวเอง'}
-                                        </div>
-                                      </div>
-
-                                      {slipTargets.length === 0 ? (
-                                        <div className="text-sm text-gray-500">ไม่พบข้อมูลสลิป</div>
-                                      ) : (
-                                        <div className="space-y-2">
-                                          {slipTargets.map((p, idx) => {
-                                            const slip = p.slipInfo;
-                                            const hasSlip = !!slip?.imageUrl;
-
-                                            return (
-                                              <div key={idx} className="flex items-center justify-between text-sm border rounded-xl px-3 py-2">
-                                                <div className="text-gray-800">
-                                                  {detailIsCreator ? p.name : 'ฉัน'}
-                                                  <div className="text-xs text-gray-500">
-                                                    {slip?.reference ? `ref: ${slip.reference}` : 'ยังไม่มี ref'}
-                                                    {slip?.checkedAt ? ` • ${formatDateTimeTH(String(slip.checkedAt))}` : ''}
-                                                  </div>
-                                                </div>
-
-                                                <div className="flex items-center gap-2">
-                                                  <span className={`text-xs font-semibold ${slip?.verified ? 'text-green-700' : 'text-gray-500'}`}>
-                                                    {hasSlip ? (slip?.verified ? 'ยืนยันแล้ว' : 'อัปโหลดแล้ว') : 'ยังไม่มีสลิป'}
-                                                  </span>
-
-                                                  {hasSlip ? (
-                                                    <button
-                                                      type="button"
-                                                      onClick={() =>
-                                                        setSlipModal({
-                                                          name: detailIsCreator ? p.name : 'ฉัน',
-                                                          imageUrl: String(slip.imageUrl),
-                                                          reference: slip.reference,
-                                                          checkedAt: slip.checkedAt ? String(slip.checkedAt) : undefined,
-                                                          verified: slip.verified,
-                                                        })
-                                                      }
-                                                      className="px-3 py-2 rounded-xl border text-gray-900 bg-white hover:bg-gray-50 text-sm"
-                                                    >
-                                                      ดูสลิป
-                                                    </button>
-                                                  ) : (
-                                                    <span className="text-xs text-gray-400">ยังไม่อัปโหลด</span>
-                                                  )}
-                                                </div>
-                                              </div>
-                                            );
-                                          })}
-                                        </div>
-                                      )}
-                                    </div>
-                                  ) : null}
-
-
-                                  <div className="bg-white rounded-2xl border p-4 md:col-span-2">
-                                    <div className="font-semibold text-gray-800 mb-2">รายการอาหาร</div>
-                                    {detail.items && detail.items.length ? (
-                                      <div className="divide-y">
-                                        {detail.items.map((it, idx) => (
-                                          <div key={idx} className="py-2 flex items-center justify-between text-sm">
-                                            <div className="text-gray-800">{it.items}</div>
-                                            <div className="text-gray-700 font-medium">{formatMoneyTHB(it.price)}</div>
-                                          </div>
-                                        ))}
-                                      </div>
-                                    ) : (
-                                      <div className="text-sm text-gray-500">ไม่มีรายการอาหาร</div>
-                                    )}
-                                  </div>
-                                </div>
+                                <BillExpandedContent
+                                  billId={billId}
+                                  detail={detail}
+                                  detailBillStatus={detailBillStatus}
+                                  detailIsCreator={detailIsCreator}
+                                  detailOwnerId={detailOwnerId}
+                                  copiedInviteParticipantKey={copiedInviteParticipantKey}
+                                  handleCopyGuestInviteLink={handleCopyGuestInviteLink}
+                                  setReceiptModal={setReceiptModal}
+                                  canViewSlipSection={canViewSlipSection}
+                                  slipTargets={slipTargets}
+                                  setSlipModal={setSlipModal}
+                                />
                               )}
                             </td>
                           </tr>
@@ -1437,8 +1630,8 @@ function HistoryPageContent() {
           </div>
 
           {/* Footer / Pagination */}
-          <div className="flex items-center justify-between px-5 py-4 text-sm text-gray-600 border-t">
-            <div>
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between px-4 sm:px-5 py-4 text-sm text-gray-600 border-t">
+            <div className="text-center sm:text-left">
               Showing{' '}
               <span className="font-semibold">
                 {filtered.length === 0 ? 0 : (page - 1) * pageSize + 1}-{Math.min(page * pageSize, filtered.length)}
@@ -1446,12 +1639,12 @@ function HistoryPageContent() {
               of <span className="font-semibold">{filtered.length}</span> results
             </div>
 
-            <div className="flex items-center gap-2">
+            <div className="flex items-center justify-center gap-2">
               <button
                 type="button"
                 onClick={() => setPage((p) => Math.max(1, p - 1))}
                 disabled={page <= 1}
-                className="px-3 py-2 rounded-xl border bg-white disabled:opacity-50 hover:bg-gray-50 transition"
+                className="px-3 py-2 rounded-xl border bg-white disabled:opacity-50 hover:bg-gray-50 transition min-w-20"
               >
                 Previous
               </button>
@@ -1462,7 +1655,7 @@ function HistoryPageContent() {
                 type="button"
                 onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
                 disabled={page >= totalPages}
-                className="px-3 py-2 rounded-xl border bg-white disabled:opacity-50 hover:bg-gray-50 transition"
+                className="px-3 py-2 rounded-xl border bg-white disabled:opacity-50 hover:bg-gray-50 transition min-w-20"
               >
                 Next
               </button>
