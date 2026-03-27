@@ -15,6 +15,7 @@ function LoginContent() {
 
   const router = useRouter();
   const searchParams = useSearchParams();
+  const sessionExpired = searchParams.get('sessionExpired') === '1';
 
   const rawCallbackUrl = searchParams.get('callbackUrl');
   const callbackPath =
@@ -79,6 +80,11 @@ function LoginContent() {
         <div className="bg-white rounded-[2.5rem] p-8 md:p-12 space-y-10 border border-orange-50/50 shadow-[0_25px_50px_-12px_rgba(251,140,0,0.15)]">
           {/* Header */}
           <div className="text-center space-y-4">
+            {sessionExpired && (
+              <div className="rounded-lg border border-amber-300 bg-amber-50 px-4 py-3 text-sm font-medium text-amber-800">
+                เซสชันหมดอายุ กรุณาเข้าสู่ระบบใหม่
+              </div>
+            )}
            
     
             <div className="space-y-1">

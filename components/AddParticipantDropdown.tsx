@@ -150,7 +150,7 @@ export function AddParticipantDropdown({
   if (!isOpen) return null;
 
   return (
-    <div className="mt-3 rounded-xl border border-gray-200 bg-white p-4">
+    <div className="mt-2 rounded-xl border border-gray-200 bg-white p-4">
       {/* Tabs */}
       <div className="flex gap-2 mb-3 border-b border-gray-200">
         <button
@@ -178,7 +178,7 @@ export function AddParticipantDropdown({
       {/* Tab Content */}
       {activeTab === 'friends' ? (
         // Friends Tab
-        <div className="space-y-2 max-h-56 overflow-y-auto">
+        <div className="space-y-1 max-h-60 overflow-y-auto">
           {loading ? (
             <div className="py-4 text-center text-gray-500 text-sm">
               กำลังโหลด...
@@ -195,19 +195,22 @@ export function AddParticipantDropdown({
                 key={friend._id}
                 type="button"
                 onClick={() => onAddParticipant(friend)}
-                className="w-full text-left p-3 rounded-lg border border-gray-200 hover:bg-gray-50 transition"
+                className="w-full text-left px-3 py-2 rounded-lg hover:bg-orange-50 transition"
               >
-                <div className="flex items-center justify-between gap-3">
-                  <div className="min-w-0">
+                <div className="flex items-center gap-3">
+                  <div className="flex-shrink-0 w-8 h-8 rounded-full bg-slate-200 flex items-center justify-center text-xs font-bold text-slate-500">
+                    {friend.name?.charAt(0)?.toUpperCase() || '?'}
+                  </div>
+                  <div className="min-w-0 flex-1">
                     <p className="text-sm font-medium text-gray-800 truncate">
                       {friend.name}
                     </p>
-                    <p className="text-xs text-gray-400 truncate">
+                    <p className="text-[11px] text-gray-400 truncate">
                       {friend.email}
                     </p>
                   </div>
-                  <span className="text-xs font-semibold text-[#fb8c00] whitespace-nowrap">
-                    เพิ่ม
+                  <span className="flex-shrink-0 text-[11px] font-semibold text-[#fb8c00] bg-orange-50 px-2 py-0.5 rounded-full">
+                    + เพิ่ม
                   </span>
                 </div>
               </button>
@@ -216,7 +219,7 @@ export function AddParticipantDropdown({
         </div>
       ) : (
         // Search Tab
-        <div className="space-y-3">
+        <div className="space-y-2">
           <input
             ref={searchInputRef}
             type="text"
@@ -226,7 +229,7 @@ export function AddParticipantDropdown({
             className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-[#fb8c00] focus:outline-none focus:ring-1 focus:ring-[#fb8c00]"
           />
 
-          <div className="space-y-2 max-h-56 overflow-y-auto">
+          <div className="space-y-1 max-h-60 overflow-y-auto">
             {searchQuery.trim() === '' ? (
               <div className="py-4 text-center text-gray-500 text-sm">
                 พิมพ์ชื่อหรือ Email เพื่อค้นหา
@@ -241,25 +244,28 @@ export function AddParticipantDropdown({
                 return (
                   <div
                     key={user._id}
-                    className="flex items-center justify-between p-3 rounded-lg border border-gray-200 hover:bg-gray-50 transition"
+                    className="flex items-center gap-3 px-3 py-2 rounded-lg hover:bg-gray-50 transition"
                   >
+                    <div className="flex-shrink-0 w-8 h-8 rounded-full bg-slate-200 flex items-center justify-center text-xs font-bold text-slate-500">
+                      {user.name?.charAt(0)?.toUpperCase() || '?'}
+                    </div>
                     <div className="flex-1 min-w-0">
                       <p className="text-sm font-medium text-gray-800 truncate">
                         {user.name}
                       </p>
-                      <p className="text-xs text-gray-400 truncate">
+                      <p className="text-[11px] text-gray-400 truncate">
                         {user.email}
                       </p>
                     </div>
-                    <div className="flex gap-2 flex-shrink-0">
+                    <div className="flex gap-1.5 flex-shrink-0">
                       {/* Add to bill button */}
                       <button
                         type="button"
                         onClick={() => onAddParticipant(user)}
                         title="เพิ่มเข้าบิล"
-                        className="px-2 py-1 rounded bg-blue-500 text-white text-xs font-medium hover:bg-blue-600 transition"
+                        className="text-[11px] font-semibold text-[#fb8c00] bg-orange-50 px-2 py-0.5 rounded-full hover:bg-orange-100 transition"
                       >
-                        เพิ่ม
+                        + เพิ่ม
                       </button>
 
                       {/* Friend request button */}
@@ -268,30 +274,22 @@ export function AddParticipantDropdown({
                           onClick={() => handleSendRequest(user._id)}
                           disabled={sendingRequest === user._id}
                           title="ส่งคำขอเพื่อน"
-                          className="px-2 py-1 rounded bg-gray-200 text-gray-700 text-xs font-medium hover:bg-gray-300 transition disabled:opacity-50"
+                          className="text-[11px] text-gray-500 bg-gray-100 px-2 py-0.5 rounded-full hover:bg-gray-200 transition disabled:opacity-50"
                         >
                           ส่งคำขอ
                         </button>
                       )}
 
                       {status === 'request-sent' && (
-                        <button
-                          disabled
-                          title="ส่งคำขอแล้ว"
-                          className="px-2 py-1 rounded bg-green-100 text-green-700 text-xs font-medium"
-                        >
-                          <CheckIcon className="h-4 w-4" />
-                        </button>
+                        <span className="text-[11px] text-green-600 bg-green-50 px-2 py-0.5 rounded-full flex items-center">
+                          <CheckIcon className="h-3 w-3" />
+                        </span>
                       )}
 
                       {status === 'friend' && (
-                        <button
-                          disabled
-                          title="เป็นเพื่อนแล้ว"
-                          className="px-2 py-1 rounded bg-green-500 text-white text-xs font-medium"
-                        >
-                          <CheckIcon className="h-4 w-4" />
-                        </button>
+                        <span className="text-[11px] text-green-600 bg-green-50 px-2 py-0.5 rounded-full flex items-center gap-0.5">
+                          <CheckIcon className="h-3 w-3" /> เพื่อน
+                        </span>
                       )}
                     </div>
                   </div>

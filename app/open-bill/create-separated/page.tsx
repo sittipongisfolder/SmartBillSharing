@@ -79,6 +79,12 @@ const btnPrimary =
 const btnSecondary =
   'inline-flex items-center justify-center gap-2 rounded-xl border border-gray-300 bg-white px-4 py-2.5 text-sm font-medium text-gray-700 transition hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-50';
 
+const btnGhost =
+  'inline-flex items-center justify-center gap-2 rounded-xl px-3 py-2 text-sm font-medium text-[#fb8c00] transition hover:bg-orange-50 hover:text-[#e65100]';
+
+const btnDanger =
+  'inline-flex items-center justify-center gap-2 rounded-xl border border-red-200 bg-red-50 px-4 py-2.5 text-sm font-medium text-red-600 transition hover:border-red-300 hover:bg-red-100 disabled:cursor-not-allowed disabled:opacity-50';
+
 const MAX_INT_DIGITS = 6;
 const MAX_MONEY = 999999.99;
 
@@ -274,6 +280,20 @@ function CreateBillPersonalPageInner() {
   const [creatingInvite, setCreatingInvite] = useState(false);
 
   const [isAddParticipantOpen, setIsAddParticipantOpen] = useState(false);
+  const [openOwnerDropdown, setOpenOwnerDropdown] = useState<string | null>(null);
+  const ownerDropdownRef = useRef<HTMLDivElement | null>(null);
+
+  // close owner dropdown on outside click
+  useEffect(() => {
+    if (!openOwnerDropdown) return;
+    const handler = (e: MouseEvent) => {
+      if (ownerDropdownRef.current && !ownerDropdownRef.current.contains(e.target as Node)) {
+        setOpenOwnerDropdown(null);
+      }
+    };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, [openOwnerDropdown]);
 
   const selectedParticipants = useMemo(
     () => participants.filter(isSelectableParticipant),
@@ -298,7 +318,6 @@ function CreateBillPersonalPageInner() {
       if (prev.some((p) => p.kind === 'user' && p.userId === u._id)) return prev;
       return [...prev, { localId: makeId(), kind: 'user', userId: u._id, name: u.name }];
     });
-    setIsAddParticipantOpen(false);
   };
 
   const handleAddGuestSlot = () => {
@@ -1334,7 +1353,7 @@ function CreateBillPersonalPageInner() {
   return (
     <div className="min-h-screen bg-[#fbf7f1] text-[#111827]">
       <header className="sticky top-0 z-10 bg-white/80 backdrop-blur border-b border-black/5">
-        <div className="mx-auto max-w-6xl px-6 h-16 flex items-center justify-between">
+        <div className="mx-auto max-w-6xl px-4 sm:px-6 h-16 flex items-center justify-between">
           <div className="flex items-center gap-2">
             <span className="inline-flex h-8 w-8 items-center justify-center rounded-lg bg-[#fb8c00]/10 text-[#fb8c00]">
               <span className="text-lg">🍊</span>
@@ -1344,19 +1363,19 @@ function CreateBillPersonalPageInner() {
         </div>
       </header>
 
-      <div className="min-h-screen flex flex-col items-center justify-center p-6 bg-[radial-gradient(circle_at_top_right,#fff5e6_0%,#ffffff_40%,#fff0e0_100%)]">
-        <div className="w-full max-w-150 bg-white rounded-2xl shadow-xl p-8 relative">
-          <h1 className="text-3xl font-bold mb-4 text-center text-[#4a4a4a]">
-            สร้างบิลใหม่ <span className="text-sm font-normal text-gray-500">({splitTypeLabel})</span>
+      <div className="min-h-screen flex flex-col items-center justify-center p-4 sm:p-6 bg-[radial-gradient(circle_at_top_right,#fff5e6_0%,#ffffff_40%,#fff0e0_100%)]">
+        <div className="w-full max-w-2xl bg-white rounded-2xl shadow-xl p-4 sm:p-8 relative">
+          <h1 className="text-2xl sm:text-3xl font-bold mb-4 text-center text-[#4a4a4a]">
+            สร้างบิลใหม่ <span className="block sm:inline text-sm font-normal text-gray-500">({splitTypeLabel})</span>
           </h1>
 
-          <div className="border-dashed border-2 border-gray-300 rounded-xl p-8 text-center mb-6">
-            <p className="text-lg text-[#4a4a4a] mb-2">อัปโหลดรูปบิล หรือ ลากไฟล์มาวาง</p>
+          <div className="border-dashed border-2 border-gray-300 rounded-xl p-4 sm:p-8 text-center mb-6">
+            <p className="text-base sm:text-lg text-[#4a4a4a] mb-2">อัปโหลดรูปบิล หรือ ลากไฟล์มาวาง</p>
             <p className="text-xs text-gray-400 mb-2">รองรับ PNG, JPG ขนาดไม่เกิน 10MB</p>
 
             {selectedImagePreview ? (
               <div className="mb-4 relative">
-                <div className="relative mb-3 h-64 w-full overflow-hidden rounded-2xl border border-gray-200 bg-white">
+                <div className="relative mb-3 h-52 sm:h-64 w-full overflow-hidden rounded-2xl border border-gray-200 bg-white">
                   <Image
                     src={selectedImagePreview}
                     alt="ตัวอย่างรูปบิล"
@@ -1388,11 +1407,11 @@ function CreateBillPersonalPageInner() {
               onChange={handleUploadImageDirectly}
             />
 
-            <div className="flex gap-3 flex-wrap justify-center">
+            <div className="flex flex-col sm:flex-row gap-3 justify-center">
               <button
                 type="button"
                 onClick={() => fileInputRef.current?.click()}
-                className={btnPrimary}
+                className={`${btnPrimary} w-full sm:w-auto`}
                 disabled={uploading || submitting}
               >
                 {uploading ? 'กำลังประมวลผล...' : '🤖 สแกนด้วย OCR'}
@@ -1400,7 +1419,7 @@ function CreateBillPersonalPageInner() {
               <button
                 type="button"
                 onClick={() => directUploadInputRef.current?.click()}
-                className={btnSecondary}
+                className={`${btnSecondary} w-full sm:w-auto`}
                 disabled={uploading || submitting}
               >
                 {uploading ? 'กำลังประมวลผล...' : '📸 อัปโหลดรูปอย่างเดียว'}
@@ -1425,18 +1444,12 @@ function CreateBillPersonalPageInner() {
             />
           </div>
 
-          <div className="mb-2">
-            <div className="mt-3 grid grid-cols-12 gap-3 text-xs text-gray-500">
-              <div className="col-span-4">รายการ</div>
-              <div className="col-span-2">จำนวน</div>
-              <div className="col-span-2">ราคา</div>
-              <div className="col-span-4">ผู้รับผิดชอบ</div>
-            </div>
-
+          <div className="mb-4">
             {itemList.map((it) => (
-              <div key={it.id} className="mt-2">
-                <div className="grid grid-cols-12 gap-3 items-center">
-                  <div className="col-span-4">
+              <div key={it.id} className="mb-4">
+                <div className="grid grid-cols-12 gap-3 sm:gap-4">
+                  <div className="col-span-12 sm:col-span-4">
+                    <label className="block mb-1 text-sm text-gray-600">รายการ</label>
                     <input
                       type="text"
                       className="w-full p-3 border text-gray-800 placeholder:text-gray-400 border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#fb8c00]"
@@ -1448,13 +1461,15 @@ function CreateBillPersonalPageInner() {
                     />
                   </div>
 
-                  <div className="col-span-2">
+                  <div className="col-span-4 sm:col-span-2">
+                    <label className="block mb-1 text-sm text-gray-600">จำนวน</label>
                     <input
                       type="number"
                       min={1}
                       step={1}
                       inputMode="numeric"
-                      className="w-full p-3 border text-gray-800 border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#fb8c00]"
+                      className="w-full p-3 border text-gray-800 placeholder:text-gray-400 border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#fb8c00]"
+                      placeholder="1"
                       value={it.qty}
                       onChange={(e) =>
                         handleItemChange(it.id, 'qty', e.target.value)
@@ -1462,11 +1477,12 @@ function CreateBillPersonalPageInner() {
                     />
                   </div>
 
-                  <div className="col-span-2">
+                  <div className="col-span-8 sm:col-span-2">
+                    <label className="block mb-1 text-sm text-gray-600">ราคา</label>
                     <input
                       type="text"
                       inputMode="decimal"
-                      className="w-full p-3 border text-gray-800 border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#fb8c00] text-right tabular-nums"
+                      className="w-full p-3 border text-gray-800 placeholder:text-gray-400 border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#fb8c00]"
                       value={it.price}
                       placeholder="0.00"
                       title="สูงสุด 999999.99"
@@ -1480,46 +1496,106 @@ function CreateBillPersonalPageInner() {
                     />
                   </div>
 
-                  <div className="col-span-4 flex flex-col sm:flex-row gap-2 min-w-0">
-                    <select
-                      className="min-w-0 w-full sm:w-auto flex-1 p-3 border border-gray-300 rounded-lg bg-white text-gray-800 focus:outline-none focus:ring-2 focus:ring-[#fb8c00]"
-                      value={it.ownerId}
-                      onChange={(e) => handleOwnerChange(it.id, e.target.value)}
-                    >
-                      <option value="">-- เลือก --</option>
-                      <option value="__shared__">หารร่วมกัน</option>
-                      {selectedParticipants.map((p) => (
-                        <option key={p.localId} value={p.localId}>
-                          {p.name}
-                        </option>
-                      ))}
-                    </select>
+                  <div className="col-span-12 sm:col-span-4">
+                    <label className="block mb-1 text-sm text-gray-600">ผู้รับผิดชอบ</label>
+                    <div className="relative" ref={openOwnerDropdown === it.id ? ownerDropdownRef : undefined}>
+                      <button
+                        type="button"
+                        onClick={() => setOpenOwnerDropdown(openOwnerDropdown === it.id ? null : it.id)}
+                        className={`w-full p-3 border rounded-lg bg-white text-left flex items-center justify-between gap-2 transition ${
+                          openOwnerDropdown === it.id
+                            ? 'border-[#fb8c00] ring-2 ring-[#fb8c00]'
+                            : 'border-gray-300 hover:border-gray-400'
+                        }`}
+                      >
+                        <span className={`truncate ${
+                          it.ownerId
+                            ? it.ownerId === '__shared__'
+                              ? 'text-[#fb8c00] font-medium'
+                              : 'text-gray-800'
+                            : 'text-gray-400'
+                        }`}>
+                          {it.ownerId
+                            ? it.ownerId === '__shared__'
+                              ? '👥 หารร่วมกัน'
+                              : selectedParticipants.find(p => p.localId === it.ownerId)?.name || '-- เลือก --'
+                            : '-- เลือก --'}
+                        </span>
+                        <svg className={`w-4 h-4 flex-shrink-0 text-gray-400 transition-transform ${openOwnerDropdown === it.id ? 'rotate-180' : ''}`} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                          <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
+                        </svg>
+                      </button>
+
+                      {openOwnerDropdown === it.id && (
+                        <div className="absolute z-20 mt-1 w-full bg-white border border-gray-200 rounded-xl shadow-lg overflow-hidden">
+                          <div className="max-h-48 overflow-y-auto py-1">
+                            <button
+                              type="button"
+                              onClick={() => { handleOwnerChange(it.id, ''); setOpenOwnerDropdown(null); }}
+                              className={`w-full text-left px-3 py-2.5 text-sm transition hover:bg-gray-50 ${
+                                !it.ownerId ? 'bg-orange-50 text-[#fb8c00] font-medium' : 'text-gray-500'
+                              }`}
+                            >
+                              -- เลือก --
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => { handleOwnerChange(it.id, '__shared__'); setOpenOwnerDropdown(null); }}
+                              className={`w-full text-left px-3 py-2.5 text-sm transition hover:bg-orange-50 flex items-center gap-2 ${
+                                it.ownerId === '__shared__' ? 'bg-orange-50 text-[#fb8c00] font-medium' : 'text-gray-700'
+                              }`}
+                            >
+                              <span>👥</span> หารร่วมกัน
+                            </button>
+                            {selectedParticipants.length > 0 && (
+                              <div className="border-t border-gray-100 mt-1 pt-1">
+                                {selectedParticipants.map((p) => (
+                                  <button
+                                    key={p.localId}
+                                    type="button"
+                                    onClick={() => { handleOwnerChange(it.id, p.localId); setOpenOwnerDropdown(null); }}
+                                    className={`w-full text-left px-3 py-2.5 text-sm transition hover:bg-gray-50 flex items-center gap-2 ${
+                                      it.ownerId === p.localId ? 'bg-orange-50 text-[#fb8c00] font-medium' : 'text-gray-700'
+                                    }`}
+                                  >
+                                    <span className="w-6 h-6 rounded-full bg-slate-200 flex items-center justify-center text-[10px] font-bold text-slate-600 flex-shrink-0">
+                                      {p.name.charAt(0).toUpperCase()}
+                                    </span>
+                                    <span className="truncate">{p.name}</span>
+                                  </button>
+                                ))}
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      )}
+                    </div>
                   </div>
                 </div>
 
                 {it.ownerId === '__shared__' && selectedParticipants.length > 0 && (
-                  <div className="mt-2 ml-1 rounded-xl bg-white border border-gray-200 p-3">
+                  <div className="mt-2 rounded-xl bg-slate-50 border border-gray-200 p-3">
                     <div className="flex items-center justify-between gap-2 mb-2">
                       <p className="text-xs text-gray-600">เลือกคนที่หารร่วมกัน</p>
-                      <div className="flex gap-2">
+                      <div className="flex gap-1.5">
                         <button
                           type="button"
                           onClick={() => sharedSelectAll(it.id)}
-                          className="text-xs px-3 py-1 rounded-lg border border-gray-300 hover:bg-gray-50"
+                          className="text-[11px] px-2.5 py-1 rounded-lg border border-gray-300 hover:bg-gray-50"
                         >
-                          เลือกทั้งหมด
+                          ทั้งหมด
                         </button>
                         <button
                           type="button"
                           onClick={() => sharedClearAll(it.id)}
-                          className="text-xs px-3 py-1 rounded-lg border border-gray-300 hover:bg-gray-50"
+                          className="text-[11px] px-2.5 py-1 rounded-lg border border-gray-300 hover:bg-gray-50"
                         >
                           ล้าง
                         </button>
                       </div>
                     </div>
 
-                    <div className="flex flex-wrap gap-2">
+                    <div className="flex flex-wrap gap-1.5">
                       {selectedParticipants.map((p) => {
                         const checked = (it.sharedWith || []).includes(p.localId);
                         return (
@@ -1546,53 +1622,51 @@ function CreateBillPersonalPageInner() {
                     type="button"
                     onClick={() => handleRemoveItem(it.id)}
                     disabled={itemList.length <= 1}
-                    className={`px-4 py-2 rounded-lg text-sm border transition ${
-                      itemList.length <= 1
-                        ? 'border-gray-200 text-gray-400 cursor-not-allowed bg-gray-50'
-                        : 'border-red-300 text-red-600 hover:bg-red-50 hover:border-red-400'
-                    }`}
+                    className={`${itemList.length <= 1 ? btnSecondary : btnDanger} w-full sm:w-auto`}
                   >
                     ลบรายการ
                   </button>
                 </div>
               </div>
             ))}
-
-            <div className="mt-3 flex flex-wrap gap-2">
-              <button
-                type="button"
-                onClick={handleAddItem}
-                className="text-sm text-[#fb8c00] font-medium hover:text-[#e65100]"
-              >
-                ➕ เพิ่มรายการอาหาร
-              </button>
-
-              <button
-                type="button"
-                onClick={assignUnassignedToMe}
-                className="text-sm text-gray-700 font-medium hover:text-gray-900"
-              >
-                กำหนดช่องว่างให้ฉัน
-              </button>
-
-              <button
-                type="button"
-                onClick={assignAllShared}
-                className="text-sm text-gray-700 font-medium hover:text-gray-900"
-              >
-                ตั้งทุกรายการเป็นหารร่วมกัน
-              </button>
-            </div>
-
-            <p className="mt-2 text-xs text-gray-400">
-              * การกำหนดผู้รับผิดชอบหรือหารร่วมกัน จะอ้างอิงจากผู้เข้าร่วมที่เลือกไว้ด้านล่าง
-            </p>
           </div>
 
-          <div className="mb-6 mt-6">
-            <label className="block mb-1 text-sm text-gray-600">ผู้เข้าร่วม</label>
+          <div className="flex flex-wrap gap-2">
+            <button
+              type="button"
+              onClick={handleAddItem}
+              className={`${btnGhost} w-full sm:w-auto`}
+            >
+              ➕ เพิ่มรายการอาหาร
+            </button>
 
-            <div className="space-y-3">
+            <button
+              type="button"
+              onClick={assignUnassignedToMe}
+              className={`${btnGhost} w-full sm:w-auto !text-gray-700 hover:!text-gray-900`}
+            >
+              กำหนดช่องว่างให้ฉัน
+            </button>
+
+            <button
+              type="button"
+              onClick={assignAllShared}
+              className={`${btnGhost} w-full sm:w-auto !text-gray-700 hover:!text-gray-900`}
+            >
+              ตั้งทุกรายการเป็นหารร่วมกัน
+            </button>
+          </div>
+
+          <p className="mt-2 text-xs text-gray-400">
+            * การกำหนดผู้รับผิดชอบหรือหารร่วมกัน จะอ้างอิงจากผู้เข้าร่วมที่เลือกไว้ด้านล่าง
+          </p>
+
+          <div className="mb-6 mt-6">
+            <label className="block mb-1 text-sm font-medium text-gray-700">ผู้เข้าร่วม</label>
+            <p className="text-[11px] text-gray-500 mb-2">เพิ่มคนในบิล และสร้างลิงก์เชิญสำหรับ Guest ได้จากที่นี่</p>
+
+            {/* Compact participant list */}
+            <div className="rounded-xl border border-slate-200 bg-white divide-y divide-slate-100 overflow-hidden">
               {participants.map((p, index) => {
                 const isOwnerRow = Boolean(
                   index === 0 &&
@@ -1603,115 +1677,139 @@ function CreateBillPersonalPageInner() {
                 const isGuestSlot = p.kind === 'guest_placeholder' || p.kind === 'guest';
 
                 return (
-                  <div key={p.localId} className="flex gap-2 items-center">
-                    {p.kind === 'user' ? (
-                      <select
-                        className="flex-1 p-3 border border-gray-300 rounded-lg bg-white text-gray-800 focus:outline-none focus:ring-2 focus:ring-[#fb8c00]"
-                        value={p.userId ?? ''}
-                        disabled={isOwnerRow}
-                        onChange={(e) => {
-                          const id = e.target.value;
-                          const u = users.find((x) => x._id === id);
-                          setParticipants((prev) =>
-                            prev.map((row) =>
-                              row.localId === p.localId
-                                ? { ...row, userId: id, name: u?.name || '' }
-                                : row
-                            )
-                          );
-                        }}
-                      >
-                        <option value="">-- เลือกผู้ใช้ --</option>
-                        {users
-                          .filter(
-                            (u) =>
-                              !participants.some(
-                                (x) =>
-                                  x.localId !== p.localId &&
-                                  x.kind === 'user' &&
-                                  x.userId === u._id
+                  <div key={p.localId} className="flex items-center gap-2 px-3 py-2">
+                    {/* Avatar circle */}
+                    <div className={`flex-shrink-0 w-7 h-7 rounded-full flex items-center justify-center text-[11px] font-bold text-white ${
+                      isOwnerRow ? 'bg-[#fb8c00]' : isGuestSlot ? 'bg-violet-500' : 'bg-slate-400'
+                    }`}>
+                      {isOwnerRow ? '👑' : isGuestSlot ? 'G' : (index)}
+                    </div>
+
+                    {/* Name / select */}
+                    <div className="flex-1 min-w-0">
+                      {p.kind === 'user' ? (
+                        isOwnerRow ? (
+                          <span className="text-sm font-medium text-gray-800 truncate block">
+                            {p.name || 'คุณ'} <span className="text-[10px] text-[#fb8c00] font-normal">(เจ้าของบิล)</span>
+                          </span>
+                        ) : p.userId ? (
+                          <span className="text-sm text-gray-800 truncate block">{p.name}</span>
+                        ) : (
+                          <select
+                            className="w-full text-sm border-0 bg-transparent text-gray-800 py-0 focus:outline-none focus:ring-0"
+                            value={p.userId ?? ''}
+                            onChange={(e) => {
+                              const id = e.target.value;
+                              const u = users.find((x) => x._id === id);
+                              setParticipants((prev) =>
+                                prev.map((row) =>
+                                  row.localId === p.localId
+                                    ? { ...row, userId: id, name: u?.name || '' }
+                                    : row
+                                )
+                              );
+                            }}
+                          >
+                            <option value="">-- เลือกผู้ใช้ --</option>
+                            {users
+                              .filter(
+                                (u) =>
+                                  !participants.some(
+                                    (x) =>
+                                      x.localId !== p.localId &&
+                                      x.kind === 'user' &&
+                                      x.userId === u._id
+                                  )
                               )
-                          )
-                          .map((u) => (
-                            <option key={u._id} value={u._id}>
-                              {u.name}
-                              {u.email === currentUserEmail ? ' (คุณ)' : ''}
-                            </option>
-                          ))}
-                      </select>
-                    ) : (
-                      <div className="flex-1 p-3 border border-gray-300 rounded-lg bg-gray-50 text-gray-800">
-                        <div className="flex items-center gap-2">
-                          <span className="font-medium">{p.name}</span>
-                          <span className="text-xs px-2 py-0.5 rounded-full bg-gray-200 text-gray-600">
-                            {p.kind === 'guest' ? 'Guest เข้าร่วมแล้ว' : 'ช่องสำหรับ Guest'}
+                              .map((u) => (
+                                <option key={u._id} value={u._id}>
+                                  {u.name}
+                                  {u.email === currentUserEmail ? ' (You)' : ''}
+                                </option>
+                              ))}
+                          </select>
+                        )
+                      ) : (
+                        <div className="flex items-center gap-1.5">
+                          <span className="text-sm text-gray-800 truncate">{p.name || 'Guest'}</span>
+                          <span className={`text-[9px] px-1.5 py-px rounded-full font-medium ${
+                            p.kind === 'guest'
+                              ? 'bg-emerald-50 text-emerald-600'
+                              : 'bg-amber-50 text-amber-600'
+                          }`}>
+                            {p.kind === 'guest' ? 'เข้าร่วม' : 'รอเชิญ'}
                           </span>
                         </div>
-                      </div>
-                    )}
+                      )}
+                    </div>
 
-                    {isGuestSlot ? (
-                      <button
-                        type="button"
-                        disabled={
-                          p.kind !== 'guest_placeholder' || creatingDraft || creatingInvite || submitting
-                        }
-                        onClick={() => handleCreateInvite(p.localId)}
-                        className={`px-3 py-2 rounded-lg text-sm border ${
-                          p.kind !== 'guest_placeholder' || creatingDraft || creatingInvite || submitting
-                            ? 'border-gray-200 text-gray-400 cursor-not-allowed bg-gray-50'
-                            : copiedInviteLocalId === p.localId
-                              ? 'border-green-300 text-green-700 bg-green-50'
-                              : inviteLinkByLocalId[p.localId]
-                                ? 'border-blue-300 text-blue-700 hover:bg-blue-50'
-                                : 'border-orange-300 text-orange-700 hover:bg-orange-50'
-                        }`}
-                      >
-                        {copiedInviteLocalId === p.localId
-                          ? '✅ คัดลอกแล้ว'
-                          : inviteLinkByLocalId[p.localId]
-                            ? '📋 คัดลอกลิงก์'
-                            : '🔗 เชิญ'}
-                      </button>
-                    ) : null}
+                    {/* Action buttons */}
+                    <div className="flex-shrink-0 flex items-center gap-1">
+                      {isGuestSlot ? (
+                        <button
+                          type="button"
+                          disabled={
+                            p.kind !== 'guest_placeholder' || creatingDraft || creatingInvite || submitting
+                          }
+                          onClick={() => handleCreateInvite(p.localId)}
+                          className={`h-6 px-2 rounded text-[10px] font-medium whitespace-nowrap transition ${
+                            p.kind !== 'guest_placeholder' || creatingDraft || creatingInvite || submitting
+                              ? 'text-slate-400 cursor-not-allowed bg-slate-100'
+                              : copiedInviteLocalId === p.localId
+                                ? 'text-green-700 bg-green-50'
+                                : inviteLinkByLocalId[p.localId]
+                                  ? 'text-blue-700 bg-blue-50 hover:bg-blue-100'
+                                  : 'text-orange-700 bg-orange-50 hover:bg-orange-100'
+                          }`}
+                        >
+                          {copiedInviteLocalId === p.localId
+                            ? '✓ คัดลอก'
+                            : inviteLinkByLocalId[p.localId]
+                              ? 'คัดลอกลิงก์'
+                              : 'เชิญ'}
+                        </button>
+                      ) : null}
 
-                    <button
-                      type="button"
-                      disabled={isOwnerRow}
-                      onClick={() => handleRemoveParticipant(index)}
-                      className={`px-5 py-2 rounded-lg transition-all duration-200 shadow-sm ${
-                        isOwnerRow
-                          ? 'bg-gray-200 text-gray-400 cursor-not-allowed'
-                          : 'bg-red-500 text-white hover:bg-red-600 hover:scale-105'
-                      }`}
-                    >
-                      🗑
-                    </button>
+                      {!isOwnerRow && (
+                        <button
+                          type="button"
+                          onClick={() => handleRemoveParticipant(index)}
+                          className="h-6 w-6 inline-flex items-center justify-center rounded text-rose-400 hover:bg-rose-50 hover:text-rose-600 transition"
+                        >
+                          <svg xmlns="http://www.w3.org/2000/svg" className="h-3.5 w-3.5" viewBox="0 0 20 20" fill="currentColor">
+                            <path fillRule="evenodd" d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z" clipRule="evenodd" />
+                          </svg>
+                        </button>
+                      )}
+                    </div>
                   </div>
                 );
               })}
             </div>
 
-            <div className="mt-3 flex flex-wrap items-center gap-3">
+            {/* Action buttons row */}
+            <div className="mt-2 flex flex-wrap gap-1.5">
               <button
                 onClick={handleAddParticipant}
-                className="text-sm text-[#fb8c00] font-medium hover:text-[#e65100]"
+                className="inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-medium text-[#fb8c00] bg-orange-50 border border-orange-200 transition hover:bg-orange-100"
                 type="button"
               >
-                ➕ เพิ่มผู้เข้าร่วม
+                <svg xmlns="http://www.w3.org/2000/svg" className="h-3.5 w-3.5" viewBox="0 0 20 20" fill="currentColor"><path d="M8 9a3 3 0 100-6 3 3 0 000 6zM8 11a6 6 0 016 6H2a6 6 0 016-6zM16 7a1 1 0 10-2 0v1h-1a1 1 0 100 2h1v1a1 1 0 102 0v-1h1a1 1 0 100-2h-1V7z" /></svg>
+                เพิ่มผู้เข้าร่วม
               </button>
 
               <button
                 onClick={handleAddGuestSlot}
-                className="text-sm text-[#fb8c00] font-medium hover:text-[#e65100]"
+                className="inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-medium text-violet-600 bg-violet-50 border border-violet-200 transition hover:bg-violet-100"
                 type="button"
               >
-                ➕ เพิ่มช่อง Guest
+                <svg xmlns="http://www.w3.org/2000/svg" className="h-3.5 w-3.5" viewBox="0 0 20 20" fill="currentColor"><path fillRule="evenodd" d="M10 9a3 3 0 100-6 3 3 0 000 6zm-7 9a7 7 0 1114 0H3z" clipRule="evenodd" /></svg>
+                เพิ่ม Guest
               </button>
 
               {draftBillId ? (
-                <span className="text-xs px-2 py-1 rounded-full bg-orange-50 text-orange-700 border border-orange-200">
-                  บันทึกฉบับร่างแล้ว
+                <span className="text-[10px] px-2 py-1 rounded-full bg-orange-50 text-orange-700 border border-orange-200 self-center">
+                  ฉบับร่าง
                 </span>
               ) : null}
             </div>
@@ -1757,7 +1855,7 @@ function CreateBillPersonalPageInner() {
               </p>
             </div>
 
-            <div className="bg-[#f1f1f1] rounded-2xl p-5">
+            <div className="bg-[#f1f1f1] rounded-2xl p-4 sm:p-5">
               {calc.perParticipant.length === 0 ? (
                 <p className="text-sm text-gray-500 text-center">
                   ยังไม่มีผู้เข้าร่วม
@@ -1765,15 +1863,15 @@ function CreateBillPersonalPageInner() {
               ) : (
                 <div className="space-y-2">
                   {calc.perParticipant.map((p) => (
-                    <div key={p.localId} className="flex items-center justify-between">
-                      <div className="text-[#4a4a4a]">
+                    <div key={p.localId} className="flex items-start sm:items-center justify-between gap-3">
+                      <div className="text-[#4a4a4a] min-w-0">
                         {p.name} ({calc.total > 0 ? p.percent.toFixed(0) : '0'}%)
                         <div className="text-xs text-gray-500">
                           ของตัวเอง: {money(p.personal).toFixed(2)} ฿ + Shared ที่โดนหาร:{' '}
                           {money(p.shared).toFixed(2)} ฿
                         </div>
                       </div>
-                      <div className="text-[#4a4a4a] font-semibold">
+                      <div className="text-[#4a4a4a] font-semibold whitespace-nowrap">
                         {money(p.amount).toFixed(2)} ฿
                       </div>
                     </div>
@@ -1794,7 +1892,7 @@ function CreateBillPersonalPageInner() {
             <button
               onClick={handleSubmit}
               disabled={submitting || uploading}
-              className={`w-70 inline-flex items-center justify-center gap-2 px-3 py-3 font-semibold rounded-full shadow-md transition-all duration-300 ${
+              className={`w-full sm:w-70 inline-flex items-center justify-center gap-2 px-3 py-3 font-semibold rounded-full shadow-md transition-all duration-300 ${
                 submitting || uploading
                   ? 'bg-gray-300 text-gray-600 cursor-not-allowed'
                   : 'bg-[#fb8c00] text-white hover:bg-[#e65100] hover:shadow-lg'

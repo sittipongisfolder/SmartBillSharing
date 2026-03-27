@@ -242,7 +242,7 @@ export default function NotificationBell() {
               <button
                 type="button"
                 onClick={clearAll}
-                className="h-9 px-3 rounded-xl text-sm font-semibold text-gray-700 hover:bg-gray-50 flex items-center gap-2"
+                className="h-9 px-3 rounded-xl text-sm font-semibold text-gray-700 hover:bg-red-500 flex items-center gap-2"
               >
                 <TrashIcon className="h-4 w-4" />
                 ลบทั้งหมด

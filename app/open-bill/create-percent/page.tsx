@@ -156,6 +156,12 @@ const btnPrimary =
 const btnSecondary =
   'inline-flex items-center justify-center gap-2 rounded-xl border border-gray-300 bg-white px-4 py-2.5 text-sm font-medium text-gray-700 transition hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-50';
 
+const btnGhost =
+  'inline-flex items-center justify-center gap-2 rounded-xl px-3 py-2 text-sm font-medium text-[#fb8c00] transition hover:bg-orange-50 hover:text-[#e65100]';
+
+const btnDanger =
+  'inline-flex items-center justify-center gap-2 rounded-xl border border-red-200 bg-red-50 px-4 py-2.5 text-sm font-medium text-red-600 transition hover:border-red-300 hover:bg-red-100 disabled:cursor-not-allowed disabled:opacity-50';
+
 function isLocalGuestLike(p: Participant) {
   return p.kind === 'guest' || p.kind === 'guest_placeholder';
 }
@@ -285,7 +291,6 @@ function CreatePercentPageInner() {
       if (prev.some((p) => p.kind === 'user' && p.userId === u._id)) return prev;
       return [...prev, { localId: makeLocalId(), kind: 'user', userId: u._id, name: u.name, percent: '', amount: 0, pctMode: 'percent' }];
     });
-    setIsAddParticipantOpen(false);
   };
 
   const handleAddGuestSlot = () => {
@@ -742,17 +747,19 @@ function CreatePercentPageInner() {
 
   const getTotalNumber = () => (typeof totalPrice === 'number' ? money(totalPrice) : 0);
 
-  const findBalanceIndex = (arr: Participant[], editedIndex: number) => {
-    for (let i = arr.length - 1; i >= 0; i--) {
-      if (isSelectableParticipant(arr[i]) && i !== editedIndex) return i;
+  /** หา index ของคนที่เลือกได้ทั้งหมด ยกเว้น editedIndex */
+  const findOtherSelectableIndices = (arr: Participant[], editedIndex: number) => {
+    const indices: number[] = [];
+    for (let i = 0; i < arr.length; i++) {
+      if (i !== editedIndex && isSelectableParticipant(arr[i])) indices.push(i);
     }
-    return -1;
+    return indices;
   };
 
   const sumAmounts = (arr: Participant[]) =>
     money(arr.reduce((s, p) => (isSelectableParticipant(p) ? s + money(toNumber(p.amount, 0)) : s), 0));
 
-  // ✅ แก้ % แล้วให้ amount ตาม + คน balance รับเศษ
+  // ✅ แก้ % แล้วเศษที่เหลือหารเท่ากันให้คนอื่นทุกคน
   const setPercentAt = (index: number, raw: string) => {
     const pct: PercentValue = toPercentValue(raw);
 
@@ -772,36 +779,36 @@ function CreatePercentPageInner() {
 
       if (total <= 0) return next;
 
-      const bal = findBalanceIndex(next, index);
-      if (bal === -1) return next;
+      const others = findOtherSelectableIndices(next, index);
+      if (others.length === 0) return next;
 
-      const sumOtherPct = round2(
-        next.reduce((s, p, i) => {
-          if (i === bal) return s;
-          if (!isSelectableParticipant(p)) return s;
-          return s + (typeof p.percent === 'number' ? p.percent : 0);
-        }, 0)
-      );
+      // คำนวณ % ที่เหลือ แล้วหารเท่ากัน
+      const editedPct = typeof pct === 'number' ? pct : 0;
+      const remainPct = clampPercentNum(100 - editedPct);
+      const eachPct = round2(remainPct / others.length);
 
-      const balPct = clampPercentNum(100 - sumOtherPct);
-      const balAmt = money((total * balPct) / 100);
+      for (let i = 0; i < others.length; i++) {
+        const idx = others[i];
+        const thisPct = i < others.length - 1 ? eachPct : clampPercentNum(remainPct - eachPct * (others.length - 1));
+        const thisAmt = money((total * thisPct) / 100);
+        next[idx] = { ...next[idx], percent: thisPct, amount: thisAmt, pctMode: 'percent' };
+      }
 
-      next[bal] = { ...next[bal], percent: balPct, amount: balAmt, pctMode: 'percent' };
-
-      // กันเศษสตางค์
+      // กันเศษสตางค์ — ปรับคนสุดท้าย
       const diff = money(total - sumAmounts(next));
       if (diff !== 0) {
-        const cur = money(toNumber(next[bal].amount, 0));
+        const lastIdx = others[others.length - 1];
+        const cur = money(toNumber(next[lastIdx].amount, 0));
         const newAmt = money(cur + diff);
         const newPct = total > 0 ? clampPercentNum((newAmt / total) * 100) : 0;
-        next[bal] = { ...next[bal], amount: newAmt, percent: newPct, pctMode: 'percent' };
+        next[lastIdx] = { ...next[lastIdx], amount: newAmt, percent: newPct, pctMode: 'percent' };
       }
 
       return next;
     });
   };
 
-  // ✅ แก้ amount แล้วให้ % ตาม + คน balance รับเศษ
+  // ✅ แก้ amount แล้วเศษที่เหลือหารเท่ากันให้คนอื่นทุกคน
   const setAmountAt = (index: number, raw: string) => {
     const normalized = normalizeMoneyInput(raw);
     const amt: AmountValue = normalized === '' ? '' : toAmountValue(normalized);
@@ -828,52 +835,49 @@ function CreatePercentPageInner() {
         return { ...p, amount: amtNum, percent: pctNum, pctMode: 'amount' };
       });
 
-      const bal = findBalanceIndex(next, index);
-      if (bal === -1) return next;
+      const others = findOtherSelectableIndices(next, index);
+      if (others.length === 0) return next;
 
-      const sumOtherAmt = money(
-        next.reduce((s, p, i) => {
-          if (i === bal) return s;
-          if (!isSelectableParticipant(p)) return s;
-          return s + money(toNumber(p.amount, 0));
-        }, 0)
-      );
+      // คำนวณเงินที่เหลือ แล้วหารเท่ากัน
+      const editedAmt = money(toNumber(amt, 0));
+      const remainAmt = money(total - editedAmt);
+      const eachAmt = money(remainAmt / others.length);
 
-      const balAmt = money(total - sumOtherAmt);
-      const balPct = total > 0 ? clampPercentNum((balAmt / total) * 100) : 0;
-
-      next[bal] = { ...next[bal], amount: balAmt, percent: balPct, pctMode: 'percent' };
+      for (let i = 0; i < others.length; i++) {
+        const idx = others[i];
+        const thisAmt = i < others.length - 1 ? eachAmt : money(remainAmt - eachAmt * (others.length - 1));
+        const thisPct = total > 0 ? clampPercentNum((thisAmt / total) * 100) : 0;
+        next[idx] = { ...next[idx], amount: thisAmt, percent: thisPct, pctMode: 'percent' };
+      }
 
       // กันเศษสตางค์
       const diff = money(total - sumAmounts(next));
       if (diff !== 0) {
-        const cur = money(toNumber(next[bal].amount, 0));
+        const lastIdx = others[others.length - 1];
+        const cur = money(toNumber(next[lastIdx].amount, 0));
         const newAmt = money(cur + diff);
         const newPct = total > 0 ? clampPercentNum((newAmt / total) * 100) : 0;
-        next[bal] = { ...next[bal], amount: newAmt, percent: newPct, pctMode: 'percent' };
+        next[lastIdx] = { ...next[lastIdx], amount: newAmt, percent: newPct, pctMode: 'percent' };
       }
 
       return next;
     });
   };
 
-  // ✅ ถ้า Total เปลี่ยน (เช่น OCR เติม total) ให้คำนวณตาม mode แบบนิ่ง ๆ
+  // ✅ ถ้า Total เปลี่ยน (เช่น OCR เติม total) ให้คำนวณตาม mode + หารเท่าให้คนที่เหลือ
   useEffect(() => {
     if (splitType !== 'percentage') return;
     const total = getTotalNumber();
     if (total <= 0) return;
 
     setParticipants((prev) => {
-      // หา bal = คนสุดท้ายที่มี userId
-      let bal = -1;
-      for (let i = prev.length - 1; i >= 0; i--) {
-        if (isSelectableParticipant(prev[i])) {
-          bal = i;
-          break;
-        }
+      const selectableIndices: number[] = [];
+      for (let i = 0; i < prev.length; i++) {
+        if (isSelectableParticipant(prev[i])) selectableIndices.push(i);
       }
-      if (bal === -1) return prev;
+      if (selectableIndices.length === 0) return prev;
 
+      // คำนวณ amount ตาม mode ปัจจุบันของแต่ละคน
       const next: Participant[] = prev.map((p): Participant => {
         if (!isSelectableParticipant(p)) return p;
 
@@ -889,26 +893,62 @@ function CreatePercentPageInner() {
         return { ...p, percent: pct, amount: amt, pctMode: 'percent' };
       });
 
-      // balance ให้รวมเงิน = total
-      const sumOtherAmt = money(
-        next.reduce((s, p, i) => {
-          if (i === bal) return s;
-          if (!isSelectableParticipant(p)) return s;
-          return s + money(toNumber(p.amount, 0));
-        }, 0)
-      );
+      // ถ้าไม่มีใครกำหนดค่า (ทุกคน % = 0) → หารเท่ากัน
+      const hasAnyValue = selectableIndices.some((i) => {
+        const p = next[i];
+        return (typeof p.percent === 'number' && p.percent > 0) || money(toNumber(p.amount, 0)) > 0;
+      });
 
-      const balAmt = money(total - sumOtherAmt);
-      const balPct = clampPercentNum((balAmt / total) * 100);
-      next[bal] = { ...next[bal], amount: balAmt, percent: balPct, pctMode: 'percent' };
+      if (!hasAnyValue) {
+        const eachPct = round2(100 / selectableIndices.length);
+        const eachAmt = money(total / selectableIndices.length);
+        for (let i = 0; i < selectableIndices.length; i++) {
+          const idx = selectableIndices[i];
+          if (i < selectableIndices.length - 1) {
+            next[idx] = { ...next[idx], percent: eachPct, amount: eachAmt, pctMode: 'percent' };
+          } else {
+            const usedPct = eachPct * (selectableIndices.length - 1);
+            const usedAmt = eachAmt * (selectableIndices.length - 1);
+            next[idx] = {
+              ...next[idx],
+              percent: clampPercentNum(100 - usedPct),
+              amount: money(total - usedAmt),
+              pctMode: 'percent',
+            };
+          }
+        }
+      } else {
+        // balance: กระจายเศษให้คน pctMode !== 'amount' ที่เหลือ
+        const fixedIndices = selectableIndices.filter((i) => next[i].pctMode === 'amount');
+        const flexIndices = selectableIndices.filter((i) => next[i].pctMode !== 'amount');
 
-      // กันเศษสตางค์
-      const diff = money(total - sumAmounts(next));
-      if (diff !== 0) {
-        const cur = money(toNumber(next[bal].amount, 0));
-        const newAmt = money(cur + diff);
-        const newPct = clampPercentNum((newAmt / total) * 100);
-        next[bal] = { ...next[bal], amount: newAmt, percent: newPct, pctMode: 'percent' };
+        if (flexIndices.length > 0) {
+          const fixedSum = money(fixedIndices.reduce((s, i) => s + money(toNumber(next[i].amount, 0)), 0));
+          const flexSum = money(flexIndices.reduce((s, i) => s + money(toNumber(next[i].amount, 0)), 0));
+          const currentFlexTotal = flexSum;
+          const targetFlexTotal = money(total - fixedSum);
+
+          if (currentFlexTotal > 0 && Math.abs(targetFlexTotal - currentFlexTotal) > 0.01) {
+            // ปรับสัดส่วน flex ตาม ratio
+            const ratio = targetFlexTotal / currentFlexTotal;
+            for (const idx of flexIndices) {
+              const oldAmt = money(toNumber(next[idx].amount, 0));
+              const newAmt = money(oldAmt * ratio);
+              const newPct = clampPercentNum((newAmt / total) * 100);
+              next[idx] = { ...next[idx], amount: newAmt, percent: newPct, pctMode: 'percent' };
+            }
+          }
+
+          // กันเศษสตางค์
+          const diff = money(total - sumAmounts(next));
+          if (diff !== 0) {
+            const lastFlex = flexIndices[flexIndices.length - 1];
+            const cur = money(toNumber(next[lastFlex].amount, 0));
+            const newAmt = money(cur + diff);
+            const newPct = clampPercentNum((newAmt / total) * 100);
+            next[lastFlex] = { ...next[lastFlex], amount: newAmt, percent: newPct, pctMode: 'percent' };
+          }
+        }
       }
 
       // ถ้าไม่เปลี่ยนจริง ๆ คืน prev
@@ -1511,7 +1551,7 @@ function CreatePercentPageInner() {
   return (
     <div className="min-h-screen bg-[#fbf7f1] text-[#111827]">
       <header className="sticky top-0 z-10 bg-white/80 backdrop-blur border-b border-black/5">
-        <div className="mx-auto max-w-6xl px-6 h-16 flex items-center justify-between">
+        <div className="mx-auto max-w-6xl px-4 sm:px-6 h-16 flex items-center justify-between">
           <div className="flex items-center gap-2">
             <span className="inline-flex h-8 w-8 items-center justify-center rounded-lg bg-[#fb8c00]/10 text-[#fb8c00]">
               <span className="text-lg">🍊</span>
@@ -1521,19 +1561,19 @@ function CreatePercentPageInner() {
         </div>
       </header>
 
-      <div className="min-h-screen flex flex-col items-center justify-center p-6 bg-[radial-gradient(circle_at_top_right,#fff5e6_0%,#ffffff_40%,#fff0e0_100%)]">
-        <div className="w-full max-w-lg bg-white rounded-2xl shadow-xl p-8 relative">
-          <h1 className="text-3xl font-bold mb-4 text-center text-[#4a4a4a] ">
-            สร้างบิลใหม่ <span className="text-sm font-normal text-gray-500">({splitTypeLabel})</span>
+      <div className="min-h-screen flex flex-col items-center justify-center p-4 sm:p-6 bg-[radial-gradient(circle_at_top_right,#fff5e6_0%,#ffffff_40%,#fff0e0_100%)]">
+        <div className="w-full max-w-2xl bg-white rounded-2xl shadow-xl p-4 sm:p-8 relative">
+          <h1 className="text-2xl sm:text-3xl font-bold mb-4 text-center text-[#4a4a4a]">
+            สร้างบิลใหม่ <span className="block sm:inline text-sm font-normal text-gray-500">({splitTypeLabel})</span>
           </h1>
 
-          <div className="border-dashed border-2 border-gray-300 rounded-xl p-8 text-center mb-6">
+          <div className="border-dashed border-2 border-gray-300 rounded-xl p-4 sm:p-8 text-center mb-6">
             <p className="text-lg text-[#4a4a4a] mb-2">อัปโหลดรูปบิล หรือ ลากไฟล์มาวาง</p>
             <p className="text-xs text-gray-400 mb-2">รองรับ PNG, JPG ขนาดไม่เกิน 10MB</p>
 
             {selectedImagePreview ? (
               <div className="mb-4 relative">
-                <div className="relative mb-3 h-64 w-full overflow-hidden rounded-2xl border border-gray-200 bg-white">
+                <div className="relative mb-3 h-52 sm:h-64 w-full overflow-hidden rounded-2xl border border-gray-200 bg-white">
                   <Image
                     src={selectedImagePreview}
                     alt="ตัวอย่างรูปบิล"
@@ -1553,11 +1593,11 @@ function CreatePercentPageInner() {
             <input ref={fileInputRef} type="file" accept="image/*" className="hidden" onChange={handleReceiptChange} />
             <input ref={directUploadInputRef} type="file" accept="image/*" className="hidden" onChange={handleUploadImageDirectly} />
 
-            <div className="flex gap-3 flex-wrap justify-center">
+            <div className="flex flex-col sm:flex-row gap-3 justify-center">
               <button
                 type="button"
                 onClick={() => fileInputRef.current?.click()}
-                className={btnPrimary}
+                className={`${btnPrimary} w-full sm:w-auto`}
                 disabled={uploading || submitting}
               >
                 {uploading ? 'กำลังประมวลผล...' : '🤖 สแกนด้วย OCR'}
@@ -1565,13 +1605,12 @@ function CreatePercentPageInner() {
               <button
                 type="button"
                 onClick={() => directUploadInputRef.current?.click()}
-                className={btnSecondary}
+                className={`${btnSecondary} w-full sm:w-auto`}
                 disabled={uploading || submitting}
               >
                 {uploading ? 'กำลังประมวลผล...' : '📸 อัปโหลดรูปอย่างเดียว'}
               </button>
             </div>
-
           </div>
 
           <div className="flex items-center justify-center mb-6">
@@ -1596,8 +1635,8 @@ function CreatePercentPageInner() {
           <div className="mb-4">
             {itemList.map((item, index) => (
               <div key={index} className="mb-4">
-                <div className="flex gap-4">
-                  <div className="flex-1">
+                <div className="grid grid-cols-12 gap-3 sm:gap-4">
+                  <div className="col-span-12 sm:col-span-6">
                     <label className="block mb-1 text-sm text-gray-600">รายการ</label>
                     <input
                       type="text"
@@ -1608,7 +1647,7 @@ function CreatePercentPageInner() {
                     />
                   </div>
 
-                  <div className="w-24">
+                  <div className="col-span-4 sm:col-span-2">
                     <label className="block mb-1 text-sm text-gray-600">จำนวน</label>
                     <input
                       type="number"
@@ -1622,7 +1661,7 @@ function CreatePercentPageInner() {
                     />
                   </div>
 
-                  <div className="flex-1">
+                  <div className="col-span-8 sm:col-span-4">
                     <label className="block mb-1 text-sm text-gray-600">ราคา</label>
                     <input
                       type="text"
@@ -1640,10 +1679,7 @@ function CreatePercentPageInner() {
                     type="button"
                     onClick={() => handleRemoveItem(index)}
                     disabled={itemList.length <= 1}
-                    className={`px-4 py-2 rounded-lg text-sm border transition ${itemList.length <= 1
-                      ? 'border-gray-200 text-gray-400 cursor-not-allowed bg-gray-50'
-                      : 'border-red-300 text-red-600 hover:bg-red-50 hover:border-red-400'
-                      }`}
+                    className={`${itemList.length <= 1 ? btnSecondary : btnDanger} w-full sm:w-auto`}
                   >
                     ลบรายการ
                   </button>
@@ -1654,7 +1690,7 @@ function CreatePercentPageInner() {
 
           <button
             onClick={handleAddItems}
-            className="mt-3 text-sm text-[#fb8c00] font-medium hover:text-[#e65100]"
+            className={`${btnGhost} w-full sm:w-auto`}
             type="button"
           >
             ➕ เพิ่มรายการอาหาร
@@ -1662,9 +1698,11 @@ function CreatePercentPageInner() {
 
           {/* Participants */}
           <div className="mb-6 mt-6">
-            <label className="block mb-1 text-sm text-gray-600">ผู้เข้าร่วม</label>
+            <label className="block mb-1 text-sm font-medium text-gray-700">ผู้เข้าร่วม</label>
+            <p className="text-[11px] text-gray-500 mb-2">เพิ่มคนในบิล และสร้างลิงก์เชิญสำหรับ Guest ได้จากที่นี่</p>
 
-            <div className="space-y-3">
+            {/* Compact participant list */}
+            <div className="rounded-xl border border-slate-200 bg-white divide-y divide-slate-100 overflow-hidden">
               {participants.map((participant, index) => {
                 const isOwnerRow = Boolean(
                   index === 0 &&
@@ -1676,58 +1714,137 @@ function CreatePercentPageInner() {
                 const canEditSplitValue = participant.kind === 'user' ? !!participant.userId : isGuestSlot;
 
                 return (
-                  <div key={participant.localId} className="flex gap-2 items-center">
-                    {participant.kind === 'user' ? (
-                      <select
-                        className="flex-1 p-3 border border-gray-300 rounded-lg bg-white text-gray-800 focus:outline-none focus:ring-2 focus:ring-[#fb8c00]"
-                        value={participant.userId ?? ''}
-                        disabled={isOwnerRow}
-                        onChange={(e) =>
-                          setParticipants((prev) =>
-                            prev.map((p): Participant =>
-                              p.localId === participant.localId
-                                ? {
-                                    ...p,
-                                    userId: e.target.value,
-                                    name: users.find((u) => u._id === e.target.value)?.name || '',
-                                  }
-                                : p
-                            )
-                          )
-                        }
-                      >
-                        <option value="">-- เลือกผู้ใช้ --</option>
-                        {users
-                          .filter(
-                            (u) =>
-                              !participants.some(
-                                (p) =>
-                                  p.localId !== participant.localId &&
-                                  p.kind === 'user' &&
-                                  p.userId === u._id
-                              )
-                          )
-                          .map((u) => (
-                            <option key={u._id} value={u._id}>
-                              {u.name}
-                              {u.email === currentUserEmail ? ' (คุณ)' : ''}
-                            </option>
-                          ))}
-                      </select>
-                    ) : (
-                      <div className="flex-1 p-3 border border-gray-300 rounded-lg bg-gray-50 text-gray-800">
-                        <div className="flex items-center gap-2">
-                          <span className="font-medium">{participant.name}</span>
-                          <span className="text-xs px-2 py-0.5 rounded-full bg-gray-200 text-gray-600">
-                            {participant.kind === 'guest' ? 'Guest เข้าร่วมแล้ว' : 'ช่องสำหรับ Guest'}
-                          </span>
-                        </div>
+                  <div key={participant.localId} className="px-3 py-2">
+                    <div className="flex items-center gap-2">
+                      {/* Avatar circle */}
+                      <div className={`flex-shrink-0 w-7 h-7 rounded-full flex items-center justify-center text-[11px] font-bold text-white ${
+                        isOwnerRow ? 'bg-[#fb8c00]' : isGuestSlot ? 'bg-violet-500' : 'bg-slate-400'
+                      }`}>
+                        {isOwnerRow ? '👑' : isGuestSlot ? 'G' : (index)}
                       </div>
-                    )}
 
+                      {/* Name / select */}
+                      <div className="flex-1 min-w-0">
+                        {participant.kind === 'user' ? (
+                          isOwnerRow ? (
+                            <span className="text-sm font-medium text-gray-800 truncate block">
+                              {participant.name || 'คุณ'} <span className="text-[10px] text-[#fb8c00] font-normal">(เจ้าของบิล)</span>
+                            </span>
+                          ) : participant.userId ? (
+                            <span className="text-sm text-gray-800 truncate block">{participant.name}</span>
+                          ) : (
+                            <select
+                              className="w-full text-sm border-0 bg-transparent text-gray-800 py-0 focus:outline-none focus:ring-0"
+                              value={participant.userId ?? ''}
+                              onChange={(e) =>
+                                setParticipants((prev) =>
+                                  prev.map((p): Participant =>
+                                    p.localId === participant.localId
+                                      ? {
+                                        ...p,
+                                        userId: e.target.value,
+                                        name: users.find((u) => u._id === e.target.value)?.name || '',
+                                      }
+                                      : p
+                                  )
+                                )
+                              }
+                            >
+                              <option value="">-- เลือกผู้ใช้ --</option>
+                              {users
+                                .filter(
+                                  (u) =>
+                                    !participants.some(
+                                      (p) =>
+                                        p.localId !== participant.localId &&
+                                        p.kind === 'user' &&
+                                        p.userId === u._id
+                                    )
+                                )
+                                .map((u) => (
+                                  <option key={u._id} value={u._id}>
+                                    {u.name}
+                                    {u.email === currentUserEmail ? ' (You)' : ''}
+                                  </option>
+                                ))}
+                            </select>
+                          )
+                        ) : (
+                          <div className="flex items-center gap-1.5">
+                            <span className="text-sm text-gray-800 truncate">{participant.name || 'Guest'}</span>
+                            <span className={`text-[9px] px-1.5 py-px rounded-full font-medium ${
+                              participant.kind === 'guest'
+                                ? 'bg-emerald-50 text-emerald-600'
+                                : 'bg-amber-50 text-amber-600'
+                            }`}>
+                              {participant.kind === 'guest' ? 'เข้าร่วม' : 'รอเชิญ'}
+                            </span>
+                          </div>
+                        )}
+                      </div>
+
+                      {/* Action buttons */}
+                      <div className="flex-shrink-0 flex items-center gap-1">
+                        {isGuestSlot ? (
+                          <button
+                            type="button"
+                            disabled={
+                              participant.kind !== 'guest_placeholder' ||
+                              creatingDraft ||
+                              creatingInvite ||
+                              submitting
+                            }
+                            onClick={() => handleCreateInvite(participant.localId)}
+                            className={`h-6 px-2 rounded text-[10px] font-medium whitespace-nowrap transition ${participant.kind !== 'guest_placeholder' ||
+                              creatingDraft ||
+                              creatingInvite ||
+                              submitting
+                              ? 'text-slate-400 cursor-not-allowed bg-slate-100'
+                              : copiedInviteLocalId === participant.localId
+                                ? 'text-green-700 bg-green-50'
+                                : inviteLinkByLocalId[participant.localId]
+                                  ? 'text-blue-700 bg-blue-50 hover:bg-blue-100'
+                                  : 'text-orange-700 bg-orange-50 hover:bg-orange-100'
+                              }`}
+                          >
+                            {copiedInviteLocalId === participant.localId
+                              ? '✓ คัดลอก'
+                              : inviteLinkByLocalId[participant.localId]
+                                ? 'คัดลอกลิงก์'
+                                : 'เชิญ'}
+                          </button>
+                        ) : null}
+
+                        {!isOwnerRow && (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setParticipants((prev) =>
+                                prev.length > 1 ? prev.filter((p) => p.localId !== participant.localId) : prev
+                              );
+                              setInviteLinkByLocalId((prev) => {
+                                const next = { ...prev };
+                                delete next[participant.localId];
+                                return next;
+                              });
+                              setCopiedInviteLocalId((prev) =>
+                                prev === participant.localId ? null : prev
+                              );
+                            }}
+                            className="h-6 w-6 inline-flex items-center justify-center rounded text-rose-400 hover:bg-rose-50 hover:text-rose-600 transition"
+                          >
+                            <svg xmlns="http://www.w3.org/2000/svg" className="h-3.5 w-3.5" viewBox="0 0 20 20" fill="currentColor">
+                              <path fillRule="evenodd" d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z" clipRule="evenodd" />
+                            </svg>
+                          </button>
+                        )}
+                      </div>
+                    </div>
+
+                    {/* Percent / Amount fields */}
                     {splitType === 'percentage' && (
-                      <>
-                        <div className="w-24">
+                      <div className="mt-1.5 flex gap-2 pl-9">
+                        <div className="w-20">
                           <input
                             type="number"
                             min={0}
@@ -1735,127 +1852,77 @@ function CreatePercentPageInner() {
                             step={0.01}
                             inputMode="decimal"
                             disabled={!canEditSplitValue}
-                            className="w-full p-3 border border-gray-300 rounded-lg bg-white text-gray-800 focus:outline-none focus:ring-2 focus:ring-[#fb8c00] disabled:bg-gray-100"
+                            className="w-full px-2 py-1.5 text-sm border border-slate-200 rounded-lg bg-white text-gray-800 focus:outline-none focus:ring-2 focus:ring-[#fb8c00] disabled:bg-gray-100"
                             placeholder="%"
                             value={participant.percent === '' || participant.percent === undefined ? '' : participant.percent}
                             onChange={(e) => setPercentAt(index, e.target.value)}
                           />
                         </div>
-
-                        <div className="w-32">
+                        <div className="w-28">
                           <input
                             type="text"
                             inputMode="decimal"
                             disabled={!canEditSplitValue}
-                            className="w-full p-3 border border-gray-300 rounded-lg bg-white text-gray-800 focus:outline-none focus:ring-2 focus:ring-[#fb8c00] disabled:bg-gray-100"
+                            className="w-full px-2 py-1.5 text-sm border border-slate-200 rounded-lg bg-white text-gray-800 focus:outline-none focus:ring-2 focus:ring-[#fb8c00] disabled:bg-gray-100"
                             placeholder="฿"
                             value={participant.amount === '' ? '' : money(Number(participant.amount)).toFixed(2)}
                             onChange={(e) => setAmountAt(index, e.target.value)}
                           />
                         </div>
-                      </>
-                    )}
-
-                    {splitType === 'personal' && (
-                      <div className="w-32">
-                        <input
-                          type="text"
-                          inputMode="decimal"
-                          disabled={!canEditSplitValue}
-                          className="w-full p-3 border border-gray-300 rounded-lg bg-white text-gray-800 focus:outline-none focus:ring-2 focus:ring-[#fb8c00] disabled:bg-gray-100"
-                          placeholder="฿"
-                          value={participant.amount === '' ? '' : money(Number(participant.amount)).toFixed(2)}
-                          onChange={(e) => {
-                            const normalized = normalizeMoneyInput(e.target.value);
-                            const amt = normalized === '' ? '' : toAmountValue(normalized);
-                            setParticipants((prev) =>
-                              prev.map((p): Participant =>
-                                p.localId === participant.localId ? { ...p, amount: amt } : p
-                              )
-                            );
-                          }}
-                        />
                       </div>
                     )}
 
-                    {isGuestSlot ? (
-                      <button
-                        type="button"
-                        disabled={
-                          participant.kind !== 'guest_placeholder' ||
-                          creatingDraft ||
-                          creatingInvite ||
-                          submitting
-                        }
-                        onClick={() => handleCreateInvite(participant.localId)}
-                        className={`px-3 py-2 rounded-lg text-sm border ${
-                          participant.kind !== 'guest_placeholder' || creatingDraft || creatingInvite || submitting
-                            ? 'border-gray-200 text-gray-400 cursor-not-allowed bg-gray-50'
-                            : copiedInviteLocalId === participant.localId
-                              ? 'border-green-300 text-green-700 bg-green-50'
-                              : inviteLinkByLocalId[participant.localId]
-                                ? 'border-blue-300 text-blue-700 hover:bg-blue-50'
-                                : 'border-orange-300 text-orange-700 hover:bg-orange-50'
-                        }`}
-                      >
-                        {copiedInviteLocalId === participant.localId
-                          ? '✅ คัดลอกแล้ว'
-                          : inviteLinkByLocalId[participant.localId]
-                            ? '📋 คัดลอกลิงก์'
-                            : '🔗 เชิญ'}
-                      </button>
-                    ) : null}
-
-                    <button
-                      type="button"
-                      disabled={isOwnerRow}
-                      onClick={() => {
-                        if (isOwnerRow) return;
-                        setParticipants((prev) =>
-                          prev.length > 1 ? prev.filter((p) => p.localId !== participant.localId) : prev
-                        );
-                        setInviteLinkByLocalId((prev) => {
-                          const next = { ...prev };
-                          delete next[participant.localId];
-                          return next;
-                        });
-                        setCopiedInviteLocalId((prev) =>
-                          prev === participant.localId ? null : prev
-                        );
-                      }}
-                      className={`px-5 py-2 rounded-lg transition-all duration-200 shadow-sm ${
-                        isOwnerRow
-                          ? 'bg-gray-200 text-gray-400 cursor-not-allowed'
-                          : 'bg-red-500 text-white hover:bg-red-600 hover:scale-105'
-                      }`}
-                    >
-                      🗑
-                    </button>
+                    {splitType === 'personal' && (
+                      <div className="mt-1.5 pl-9">
+                        <div className="w-28">
+                          <input
+                            type="text"
+                            inputMode="decimal"
+                            disabled={!canEditSplitValue}
+                            className="w-full px-2 py-1.5 text-sm border border-slate-200 rounded-lg bg-white text-gray-800 focus:outline-none focus:ring-2 focus:ring-[#fb8c00] disabled:bg-gray-100"
+                            placeholder="฿"
+                            value={participant.amount === '' ? '' : money(Number(participant.amount)).toFixed(2)}
+                            onChange={(e) => {
+                              const normalized = normalizeMoneyInput(e.target.value);
+                              const amt = normalized === '' ? '' : toAmountValue(normalized);
+                              setParticipants((prev) =>
+                                prev.map((p): Participant =>
+                                  p.localId === participant.localId ? { ...p, amount: amt } : p
+                                )
+                              );
+                            }}
+                          />
+                        </div>
+                      </div>
+                    )}
                   </div>
                 );
               })}
             </div>
 
-            <div className="mt-3 flex flex-wrap items-center gap-3">
+            {/* Action buttons row */}
+            <div className="mt-2 flex flex-wrap gap-1.5">
               <button
                 onClick={handleAddParticipant}
-                className="text-sm text-[#fb8c00] font-medium hover:text-[#e65100]"
+                className="inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-medium text-[#fb8c00] bg-orange-50 border border-orange-200 transition hover:bg-orange-100"
                 type="button"
               >
-                ➕ เพิ่มผู้เข้าร่วม
+                <svg xmlns="http://www.w3.org/2000/svg" className="h-3.5 w-3.5" viewBox="0 0 20 20" fill="currentColor"><path d="M8 9a3 3 0 100-6 3 3 0 000 6zM8 11a6 6 0 016 6H2a6 6 0 016-6zM16 7a1 1 0 10-2 0v1h-1a1 1 0 100 2h1v1a1 1 0 102 0v-1h1a1 1 0 100-2h-1V7z" /></svg>
+                เพิ่มผู้เข้าร่วม
               </button>
 
               <button
                 onClick={handleAddGuestSlot}
-                className="text-sm text-[#fb8c00] font-medium hover:text-[#e65100]"
+                className="inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-medium text-violet-600 bg-violet-50 border border-violet-200 transition hover:bg-violet-100"
                 type="button"
               >
-                ➕ เพิ่มช่อง Guest
+                <svg xmlns="http://www.w3.org/2000/svg" className="h-3.5 w-3.5" viewBox="0 0 20 20" fill="currentColor"><path fillRule="evenodd" d="M10 9a3 3 0 100-6 3 3 0 000 6zm-7 9a7 7 0 1114 0H3z" clipRule="evenodd" /></svg>
+                เพิ่ม Guest
               </button>
 
               {draftBillId ? (
-                <span className="text-xs px-2 py-1 rounded-full bg-orange-50 text-orange-700 border border-orange-200">
-                  บันทึกฉบับร่างแล้ว
+                <span className="text-[10px] px-2 py-1 rounded-full bg-orange-50 text-orange-700 border border-orange-200 self-center">
+                  ฉบับร่าง
                 </span>
               ) : null}
             </div>
@@ -1930,14 +1997,14 @@ function CreatePercentPageInner() {
               <p className="text-lg font-semibold text-[#4a4a4a]">สรุปยอดที่ต้องจ่าย</p>
             </div>
 
-            <div className="bg-[#f1f1f1] rounded-2xl p-5">
+            <div className="bg-[#f1f1f1] rounded-2xl p-4 sm:p-5">
               {summary.rows.length === 0 ? (
                 <p className="text-sm text-gray-500 text-center">ยังไม่มีผู้เข้าร่วม</p>
               ) : (
                 <div className="space-y-2">
                   {summary.rows.map((p) => (
-                    <div key={p.key} className="flex items-center justify-between">
-                      <div className="text-[#4a4a4a]">
+                    <div key={p.key} className="flex items-start sm:items-center justify-between gap-3">
+                      <div className="text-[#4a4a4a] min-w-0">
                         {p.name} ({summary.total > 0 ? p.percent.toFixed(0) : '0'}%)
                         <div className="text-xs text-gray-500">
                           {splitType === 'equal'
@@ -1948,7 +2015,7 @@ function CreatePercentPageInner() {
                         </div>
                       </div>
 
-                      <div className="text-[#4a4a4a] font-semibold">{money(p.amount).toFixed(2)} ฿</div>
+                      <div className="text-[#4a4a4a] font-semibold whitespace-nowrap">{money(p.amount).toFixed(2)} ฿</div>
                     </div>
                   ))}
                 </div>
@@ -1958,15 +2025,15 @@ function CreatePercentPageInner() {
           <div className="flex items-center justify-center mt-4">
             <button
               onClick={handleSubmit}
-              disabled={submitting || uploading}
-              className={`w-70 inline-flex items-center justify-center gap-2 px-3 py-3 font-semibold rounded-full shadow-md transition-all duration-300 ${submitting || uploading
+              disabled={submitting || uploading || creatingDraft || creatingInvite}
+              className={`w-full sm:w-72 inline-flex items-center justify-center gap-2 px-3 py-3 font-semibold rounded-full shadow-md transition-all duration-300 ${submitting || uploading || creatingDraft || creatingInvite
                 ? 'bg-gray-300 text-gray-600 cursor-not-allowed'
                 : 'bg-[#fb8c00] text-white hover:bg-[#e65100] hover:shadow-lg'
                 }`}
               type="button"
             >
-              <CheckCircleIcon className="w-5 h-5" />
-              <span>{submitting ? 'กำลังบันทึก...' : 'ยืนยันและบันทึกบิล'}</span>
+              <CheckCircleIcon className="w-5 h-5 text-white" />
+              <span>{submitting || creatingInvite ? 'กำลังบันทึก...' : 'ยืนยันและบันทึกบิล'}</span>
             </button>
           </div>
         </div>
