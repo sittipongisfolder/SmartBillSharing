@@ -41,7 +41,7 @@ function SessionExpiryWatcher() {
 export default function AuthProvider({ children }: { children: React.ReactNode }) {
   return (
     <SessionProvider
-      refetchInterval={1 * 60}       // ตรวจสอบ session ทุก 1 นาที
+      refetchInterval={30 * 60}       // ตรวจสอบ session ทุก 15 นาที
       refetchOnWindowFocus={true}     // ตรวจสอบเมื่อกลับมาใช้งานหน้าเว็บ
     >
       <SessionExpiryWatcher />
