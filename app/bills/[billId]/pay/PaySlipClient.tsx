@@ -162,6 +162,7 @@ export default function PaySlipClient({ billId, forcedGuestAccessToken }: { bill
   const [redirectIn, setRedirectIn] = useState<number | null>(null);
   const timeoutRef = useRef<number | null>(null);
   const intervalRef = useRef<number | null>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   function clearTimers() {
     if (timeoutRef.current) window.clearTimeout(timeoutRef.current);
@@ -335,6 +336,13 @@ export default function PaySlipClient({ billId, forcedGuestAccessToken }: { bill
   function handleSaveQr() {
     if (!qrDataUrl) return;
 
+    // iOS Safari does not support <a download> for data URLs — open in new tab so user can long-press to save
+    const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) && !(window as unknown as Record<string, unknown>).MSStream;
+    if (isIOS) {
+      window.open(qrDataUrl, '_blank');
+      return;
+    }
+
     const link = document.createElement('a');
     link.href = qrDataUrl;
     link.download = `promptpay-qr-${billId}.png`;
@@ -432,70 +440,55 @@ export default function PaySlipClient({ billId, forcedGuestAccessToken }: { bill
     <div className="min-h-screen bg-[radial-gradient(circle_at_top_right,#fff5e6_0%,#ffffff_40%,#fff0e0_100%)]">
       {/* Header */}
       <div className="sticky top-0 z-10 bg-white border-b">
-        <div className="max-w-6xl mx-auto px-4 py-4 flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
-          <div className="w-full min-w-0">
-            <div className="text-xs text-gray-500">
+        <div className="max-w-6xl mx-auto px-4 py-2 sm:py-3">
+          <div className="flex items-start justify-between gap-3 sm:gap-4">
+            <div className="min-w-0 flex-1">
+            <div className="text-xs text-gray-500 leading-none">
               {isGuestMode ? 'การชำระเงินของผู้เข้าร่วม / ยืนยันสลิป' : 'แดชบอร์ด / บิล / ยืนยันสลิป'}
             </div>
-            <div className="text-xl font-bold text-[#4a4a4a] mt-1">การยืนยันสลิปการชำระเงิน</div>
-            <div className="text-xs text-gray-500 mt-1">
-              รหัสรายการ:{' '}
-              <span className="font-semibold text-gray-600 break-all">{billId}</span>
+            <div className="text-lg sm:text-xl font-bold text-[#4a4a4a] mt-1">การยืนยันสลิปการชำระเงิน</div>
+            <div className="flex flex-wrap gap-x-4 gap-y-1 mt-1">
+              <span className="text-sm text-gray-500">
+                รหัส: <span className="font-semibold text-gray-700 break-all">{billId}</span>
+              </span>
+              <span className="text-sm text-gray-500">
+                บิล: <span className="font-semibold text-gray-700">{billTitle || '-'}</span>
+              </span>
+              {viewerName ? (
+                <span className="text-sm text-gray-500">
+                  ผู้จ่าย: <span className="font-semibold text-gray-700">{viewerName}</span>
+                </span>
+              ) : null}
             </div>
-            <div className="text-xs text-gray-500 mt-1">
-              บิล: <span className="font-semibold text-gray-700">{billTitle || '-'}</span>
             </div>
-            {viewerName ? (
-              <div className="text-xs text-gray-500 mt-1">
-                ผู้จ่าย: <span className="font-semibold text-gray-700">{viewerName}</span>
-              </div>
-            ) : null}
-          </div>
-          {isGuestMode ? (
-            <div className="mx-auto w-full max-w-[720px] rounded-2xl border border-gray-200 bg-white p-4 shadow-sm sm:p-5">
-              <div className="text-base font-bold text-gray-900 sm:text-lg">
-                ลิงก์การชำระเงินสำหรับผู้เข้าร่วม
-              </div>
 
-              <p className="mt-1 text-sm leading-6 text-gray-600">
-                บันทึกลิงก์นี้ไว้เพื่อกลับมาชำระเงินหรือแนบสลิปภายหลัง
-              </p>
-
-              <div className="mt-4 flex flex-col gap-3 sm:flex-row sm:items-center">
-                <div className="min-w-0 flex-1">
-                  <input
-                    value={guestSavedLink}
-                    readOnly
-                    onFocus={(e) => e.currentTarget.select()}
-                    className="h-11 w-full truncate rounded-xl border border-gray-300 bg-gray-50 px-4 text-sm text-gray-700 outline-none focus:border-[#fb8c00] focus:ring-2 focus:ring-orange-100"
-                  />
+            {isGuestMode ? (
+              <div className="shrink-0 w-[11  0px] sm:w-[200px] rounded-xl border border-gray-200 bg-gray-50 p-2.5 sm:p-3">
+                <div className="text-[10px] sm:text-xs text-gray-600 leading-4">
+                  คัดลอกลิงก์หน้านี้ไว้จ่าย
                 </div>
-
+                <div className="mt-2 flex justify-end">
+                  <button
+                    type="button"
+                    onClick={handleCopyGuestLink}
+                    className="inline-flex h-8 shrink-0 items-center justify-center rounded-lg bg-[#fb8c00] px-3 text-[11px] sm:text-xs font-semibold text-white transition hover:bg-[#e65100] active:scale-[0.98]"
+                  >
+                    {copied ? 'คัดลอกแล้ว ✓' : 'คัดลอกลิงก์'}
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <div className="shrink-0">
                 <button
                   type="button"
-                  onClick={handleCopyGuestLink}
-                  className="inline-flex h-11 shrink-0 items-center justify-center rounded-xl bg-[#fb8c00] px-5 text-sm font-semibold text-white transition hover:bg-[#e65100] active:scale-[0.98] sm:min-w-[132px]"
+                  onClick={() => router.push(HISTORY_PATH)}
+                  className="inline-flex shrink-0 items-center justify-center gap-2 rounded-xl border border-[#fb8c00] bg-orange-50 px-4 py-2 text-sm font-semibold text-[#e65100] shadow-sm transition hover:bg-[#fff7ed] hover:shadow-md active:scale-[0.98]"
                 >
-                  {copied ? 'คัดลอกแล้ว' : 'คัดลอกลิงก์'}
+                  กลับ
                 </button>
               </div>
-
-              <p className="mt-3 text-xs leading-5 text-gray-500">
-                เมื่อโอนเสร็จแล้ว ให้กลับมาที่ลิงก์นี้เพื่อแนบสลิปตรวจสอบ
-              </p>
-            </div>
-          ) : null}
-          {!isGuestMode && (
-            <div className="w-full md:w-auto flex justify-start md:justify-end">
-              <button
-                type="button"
-                onClick={() => router.push(HISTORY_PATH)}
-                className="inline-flex shrink-0 items-center justify-center gap-2 rounded-xl border border-[#fb8c00] bg-orange-50 px-4 py-2 text-sm font-semibold text-[#e65100] shadow-sm transition hover:bg-[#fff7ed] hover:shadow-md active:scale-[0.98]"
-              >
-                กลับ
-              </button>
-            </div>
-          )}
+            )}
+          </div>
         </div>
       </div>
 
@@ -553,7 +546,7 @@ export default function PaySlipClient({ billId, forcedGuestAccessToken }: { bill
 
                 <div className="pt-2 border-t border-dashed border-gray-900 flex justify-between items-end">
                   <span className="text-sm font-semibold text-gray-700">ยอดโอนรวม (Total)</span>
-                  <span className="text-3xl font-extrabold text-[#e65100]">
+                  <span className="text-2xl sm:text-3xl font-extrabold text-[#e65100]">
                     {formatMoneyTHB(myShare + tip)}
                   </span>
                 </div>
@@ -572,7 +565,7 @@ export default function PaySlipClient({ billId, forcedGuestAccessToken }: { bill
                   <img
                     src={qrDataUrl}
                     alt="คิวอาร์โค้ดพร้อมเพย์"
-                    className="w-[320px] h-[320px] object-contain"
+                    className="w-full max-w-[260px] sm:max-w-[320px] h-auto object-contain"
                   />
 
                   <p className="mt-2 text-sm text-gray-500 font-medium">
@@ -609,49 +602,60 @@ export default function PaySlipClient({ billId, forcedGuestAccessToken }: { bill
           <div className="flex items-center justify-between px-5 py-4 border-b">
             <div className="font-semibold text-gray-800">แนบสลิปการโอนเงิน</div>
 
-            <label className="inline-flex items-center gap-2 text-sm text-gray-600 cursor-pointer">
-              <input
-                type="file"
-                accept="image/*"
-                className="hidden"
-                onChange={(e) => setFile(e.target.files?.[0] ?? null)}
-              />
-              <span className="px-4 py-2 rounded-xl border bg-white hover:bg-gray-50">
-                เลือกไฟล์
-              </span>
-            </label>
+            <button
+              type="button"
+              onClick={() => fileInputRef.current?.click()}
+              className="inline-flex items-center gap-2 text-sm text-gray-600 cursor-pointer px-4 py-2 rounded-xl border bg-white hover:bg-gray-50 active:scale-95 transition"
+            >
+              เลือกไฟล์
+            </button>
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept="image/*"
+              className="hidden"
+              onChange={(e) => setFile(e.target.files?.[0] ?? null)}
+            />
           </div>
 
-          <div className="p-5">
+          <div className="p-4 sm:p-5">
             <div className="rounded-2xl border bg-gray-50 overflow-hidden">
               {previewUrl ? (
                 // eslint-disable-next-line @next/next/no-img-element
                 <img
                   src={previewUrl}
                   alt="ตัวอย่างสลิป"
-                  className="w-full h-[520px] object-contain"
+                  className="w-full h-56 sm:h-[520px] object-contain"
                 />
               ) : (
-                <div className="h-[520px] flex items-center justify-center text-gray-400 text-sm">
-                  ยังไม่ได้เลือกรูปสลิป
-                </div>
+                <button
+                  type="button"
+                  onClick={() => fileInputRef.current?.click()}
+                  className="w-full h-56 sm:h-[520px] flex flex-col items-center justify-center gap-3 text-gray-400 text-sm cursor-pointer hover:bg-gray-100 active:bg-gray-200 transition"
+                >
+                  <svg xmlns="http://www.w3.org/2000/svg" className="w-10 h-10 text-gray-300" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M3 16l4-4 4 4 4-6 4 6" />
+                    <rect x="3" y="3" width="18" height="18" rx="2" strokeLinecap="round" strokeLinejoin="round" />
+                  </svg>
+                  <span>แตะที่นี่เพื่อเลือกรูปสลิป</span>
+                </button>
               )}
             </div>
 
-            <div className="mt-4 flex items-center justify-end gap-3">
-              <h1 className="text-sm text-black">
+            <div className="mt-4 flex flex-col sm:flex-row sm:items-center sm:justify-end gap-3">
+              <p className="text-xs sm:text-sm text-black text-center sm:text-left">
                 * สลีปจากธนาคารกรุงเทพ
                 <span className="font-bold text-red-500">กรุณารอ 7 นาที</span>
-                และสลีปจากธนาคารไทยพาณิชย์
+                {' '}และสลีปจากธนาคารไทยพาณิชย์
                 <span className="font-bold text-red-500">กรุณารอ 2 นาทีก่อนแนบสลิปตรวจสอบ</span>
-              </h1>
+              </p>
 
               <button
                 type="button"
                 onClick={onSubmit}
                 disabled={!canSubmit || redirectIn !== null}
                 className={cx(
-                  'px-5 py-3 rounded-xl font-semibold text-white transition',
+                  'w-full sm:w-auto px-5 py-3 rounded-xl font-semibold text-white transition active:scale-95',
                   canSubmit && redirectIn === null
                     ? 'bg-[#fb8c00] hover:bg-[#e65100]'
                     : 'bg-gray-300 cursor-not-allowed'
