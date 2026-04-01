@@ -4,7 +4,7 @@ import { useSearchParams } from 'next/navigation';
 import { Suspense, useEffect, useMemo, useRef, useState, type ChangeEvent } from 'react';
 import { CheckCircleIcon } from '@heroicons/react/24/solid';
 import { useSession } from 'next-auth/react';
-import { OcrPreviewModal } from '@/components/OcrPreviewModal';
+import { OcrPreviewModal, type OcrPreviewAcceptPayload } from '@/components/OcrPreviewModal';
 import { useOcrPreview } from '@/lib/useOcrPreview';
 import { AddParticipantDropdown } from '@/components/AddParticipantDropdown';
 import Image from 'next/image';
@@ -111,6 +111,7 @@ const normalizeMoneyInput = (v: string) => {
   const decPart = (decRaw || '').slice(0, 2);
 
   if (!intPart && decPart) return `0.${decPart}`;
+  if (noExtraDots.includes('.') && decPart === '') return `${intPart || '0'}.`;
   if (!decPart) return intPart;
   return `${intPart}.${decPart}`;
 };
@@ -320,9 +321,9 @@ function CreatePercentPageInner() {
   // โหลดรายชื่อผู้ใช้
   useEffect(() => {
     async function fetchUsers() {
-      const token = localStorage.getItem('token');
+      
       const res = await fetch('/api/users', {
-        headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+        
       });
       const data = await res.json();
       setUsers(data);
@@ -370,7 +371,7 @@ function CreatePercentPageInner() {
       setSelectedImagePreview(imagePreviewUrl);
       setOcrImageFile(compressed);
 
-      const token = localStorage.getItem('token');
+      
       const fd = new FormData();
       fd.append('file', compressed);
       if (draftBillId) {
@@ -379,7 +380,7 @@ function CreatePercentPageInner() {
 
       const uploadRes = await fetch('/api/ocr/upload-receipt', {
         method: 'POST',
-        headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+        
         body: fd,
       });
 
@@ -420,7 +421,7 @@ function CreatePercentPageInner() {
     setUploading(true);
 
     try {
-      const token = localStorage.getItem('token');
+      
 
       const compressed = await compressImage(picked);
       const fd = new FormData();
@@ -433,7 +434,7 @@ function CreatePercentPageInner() {
       try {
         const res = await fetch('/api/ocr', {
           method: 'POST',
-          headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+          
           body: fd,
           signal: controller.signal,
         });
@@ -502,42 +503,19 @@ function CreatePercentPageInner() {
     }
   };
 
-  const onAcceptOcr = async () => {
+  const onAcceptOcr = async (accepted: OcrPreviewAcceptPayload) => {
     ocrPreview.setLoading(true);
 
     try {
-      const token = localStorage.getItem('token');
-      let receiptImageUrl = '';
-      let receiptImagePublicId = '';
+      const pendingImageFile = ocrImageFile;
 
       // ✅ Upload receipt image to Cloudinary if file exists
-      if (ocrImageFile) {
-        try {
-          const fd = new FormData();
-          fd.append('file', ocrImageFile);
+      // ย้ายไปอัปโหลดแบบเบื้องหลังหลังจากปิด modal เพื่อให้กดปุ่มแล้วตอบสนองทันที
 
-          const uploadRes = await fetch('/api/ocr/upload-receipt', {
-            method: 'POST',
-            headers: token ? { Authorization: `Bearer ${token}` } : undefined,
-            body: fd,
-          });
-
-          if (uploadRes.ok) {
-            const uploadData = await uploadRes.json();
-            receiptImageUrl = uploadData.url || '';
-            receiptImagePublicId = uploadData.publicId || '';
-          }
-        } catch (uploadErr) {
-          console.error('Receipt upload failed:', uploadErr);
-          // Continue even if upload fails
-        }
-      }
-
-      const previewData = ocrPreview.previewData;
-      const rawText = previewData.rawText || '';
+      const rawText = accepted.rawText || '';
 
       // ✅ Set title from preview
-      const ocrTitle = previewData.title?.trim();
+      const ocrTitle = accepted.title?.trim();
       if (ocrTitle) {
         setTitle((prev) => (prev.trim() ? prev : ocrTitle));
       }
@@ -548,7 +526,7 @@ function CreatePercentPageInner() {
       }
 
       // ✅ Map items from preview
-      const mappedFromParsed: ItemRow[] = previewData.items
+      const mappedFromParsed: ItemRow[] = accepted.selectedItems
         .map((it) => {
           const name = String(it?.name ?? '').trim();
           if (!name) return null;
@@ -609,13 +587,13 @@ function CreatePercentPageInner() {
 
       // ✅ Set items
       if (finalItems.length > 0) {
-        setItemList([...finalItems, { items: '', qty: '1', price: '' }]);
+        setItemList(finalItems);
       } else {
         setItemList([{ items: '', qty: '1', price: '' }]);
       }
 
       // ✅ Set total price
-      const totalFromParsed = money(previewData.total || 0);
+      const totalFromParsed = money(accepted.selectedTotal || 0);
       if (totalFromParsed > 0) {
         setTotalPrice(totalFromParsed);
       } else {
@@ -627,14 +605,36 @@ function CreatePercentPageInner() {
         setTotalPrice(sumFromItems > 0 ? money(sumFromItems) : '');
       }
 
-      // ✅ Store receipt image info (will be saved when bill is created)
-      if (receiptImageUrl) {
-        localStorage.setItem('ocrReceiptImageUrl', receiptImageUrl);
-        localStorage.setItem('ocrReceiptImagePublicId', receiptImagePublicId);
-      }
-
       ocrPreview.closePreview();
       setOcrImageFile(null);
+
+      if (pendingImageFile && !localStorage.getItem('ocrReceiptImageUrl')) {
+        void (async () => {
+          try {
+            const fd = new FormData();
+            fd.append('file', pendingImageFile);
+
+            const uploadRes = await fetch('/api/ocr/upload-receipt', {
+              method: 'POST',
+              body: fd,
+            });
+
+            if (!uploadRes.ok) return;
+
+            const uploadData = (await uploadRes.json()) as {
+              url?: string;
+              publicId?: string;
+            };
+
+            if (uploadData.url) {
+              localStorage.setItem('ocrReceiptImageUrl', uploadData.url);
+              localStorage.setItem('ocrReceiptImagePublicId', uploadData.publicId || '');
+            }
+          } catch (uploadErr) {
+            console.error('Background receipt upload failed:', uploadErr);
+          }
+        })();
+      }
     } catch (err) {
       console.error('Accept OCR error:', err);
       alert('เกิดข้อผิดพลาดในการปรับปรุงข้อมูล');
@@ -745,7 +745,20 @@ function CreatePercentPageInner() {
   // =========================
   const clampPercentNum = (n: number) => Math.max(0, Math.min(100, round2(n)));
 
-  const getTotalNumber = () => (typeof totalPrice === 'number' ? money(totalPrice) : 0);
+  const itemsTotalForSplit = useMemo(() => {
+    return money(
+      itemList.reduce((sum, row) => {
+        const qty = toIntQty(row.qty);
+        const unitPrice = money(parseFloat(row.price) || 0);
+        return sum + qty * unitPrice;
+      }, 0)
+    );
+  }, [itemList]);
+
+  const getTotalNumber = () => {
+    const manualTotal = typeof totalPrice === 'number' ? money(totalPrice) : 0;
+    return manualTotal > 0 ? manualTotal : itemsTotalForSplit;
+  };
 
   /** หา index ของคนที่เลือกได้ทั้งหมด ยกเว้น editedIndex */
   const findOtherSelectableIndices = (arr: Participant[], editedIndex: number) => {
@@ -966,7 +979,7 @@ function CreatePercentPageInner() {
       return same ? prev : next;
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [splitType, totalPrice]);
+  }, [splitType, totalPrice, itemsTotalForSplit]);
 
   const handleAmountChange = (e: ChangeEvent<HTMLInputElement>) => {
     const normalized = normalizeMoneyInput(e.target.value);
@@ -1101,7 +1114,7 @@ function CreatePercentPageInner() {
   };
 
   const syncDraftBill = async (): Promise<{ billId: string; dbParticipants?: DraftDbParticipant[] }> => {
-    const token = localStorage.getItem('token');
+    
     const draftPayload = buildDraftPayload();
 
     if (!draftBillId) {
@@ -1111,7 +1124,7 @@ function CreatePercentPageInner() {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
-            ...(token ? { Authorization: `Bearer ${token}` } : {}),
+            
           },
           body: JSON.stringify(draftPayload),
         });
@@ -1150,7 +1163,7 @@ function CreatePercentPageInner() {
         method: 'PATCH',
         headers: {
           'Content-Type': 'application/json',
-          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+          
         },
         body: JSON.stringify(draftPayload),
       });
@@ -1181,10 +1194,10 @@ function CreatePercentPageInner() {
   };
 
   const fetchDraftParticipants = async (billId: string): Promise<DraftDbParticipant[]> => {
-    const token = localStorage.getItem('token');
+    
 
     const res = await fetch(`/api/bills/${billId}`, {
-      headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+      
       cache: 'no-store',
     });
 
@@ -1294,7 +1307,7 @@ function CreatePercentPageInner() {
         return;
       }
 
-      const token = localStorage.getItem('token');
+      
       const localTarget = participants.find((p) => p.localId === participantLocalId);
 
       if (!localTarget) throw new Error('ไม่พบ guest slot');
@@ -1313,7 +1326,7 @@ function CreatePercentPageInner() {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+          
         },
         body: JSON.stringify({ participantId, expiresInDays: 7, maxUses: 1 }),
       });
@@ -1347,7 +1360,7 @@ function CreatePercentPageInner() {
     setSubmitting(true);
 
     try {
-      const token = localStorage.getItem('token');
+      
       const cleanedItems = itemList
         .map((it) => {
           const name = (it.items || '').trim();
@@ -1384,6 +1397,7 @@ function CreatePercentPageInner() {
 
       const itemsTotal = money(cleanedItems.reduce((sum, it) => sum + it.price, 0));
       const effectiveTotal = typeof totalPrice === 'number' && totalPrice > 0 ? money(totalPrice) : itemsTotal;
+      if (!(effectiveTotal > 0)) return alert('ยอดรวมต้องมากกว่า 0 บาท');
 
       let cleanedParticipants: Array<{
         participantId?: string;
@@ -1500,7 +1514,7 @@ function CreatePercentPageInner() {
         method,
         headers: {
           'Content-Type': 'application/json',
-          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+          
         },
         body: JSON.stringify({
           title,
@@ -1843,8 +1857,10 @@ function CreatePercentPageInner() {
 
                     {/* Percent / Amount fields */}
                     {splitType === 'percentage' && (
-                      <div className="mt-1.5 flex gap-2 pl-9">
-                        <div className="w-20">
+                      <div className="mt-2 pl-9">
+                        <div className="grid grid-cols-2 gap-2">
+                          <div className="min-w-0">
+                            <p className="mb-1 text-[11px] font-medium text-slate-600">เปอร์เซ็นต์ (%)</p>
                           <input
                             type="number"
                             min={0}
@@ -1853,34 +1869,37 @@ function CreatePercentPageInner() {
                             inputMode="decimal"
                             disabled={!canEditSplitValue}
                             className="w-full px-2 py-1.5 text-sm border border-slate-200 rounded-lg bg-white text-gray-800 focus:outline-none focus:ring-2 focus:ring-[#fb8c00] disabled:bg-gray-100"
-                            placeholder="%"
+                            placeholder="0.00"
                             value={participant.percent === '' || participant.percent === undefined ? '' : participant.percent}
                             onChange={(e) => setPercentAt(index, e.target.value)}
                           />
-                        </div>
-                        <div className="w-28">
+                          </div>
+                          <div className="min-w-0">
+                            <p className="mb-1 text-[11px] font-medium text-slate-600">จำนวนเงิน (บาท)</p>
                           <input
                             type="text"
                             inputMode="decimal"
                             disabled={!canEditSplitValue}
                             className="w-full px-2 py-1.5 text-sm border border-slate-200 rounded-lg bg-white text-gray-800 focus:outline-none focus:ring-2 focus:ring-[#fb8c00] disabled:bg-gray-100"
-                            placeholder="฿"
+                            placeholder="0.00"
                             value={participant.amount === '' ? '' : money(Number(participant.amount)).toFixed(2)}
                             onChange={(e) => setAmountAt(index, e.target.value)}
                           />
+                          </div>
                         </div>
                       </div>
                     )}
 
                     {splitType === 'personal' && (
-                      <div className="mt-1.5 pl-9">
-                        <div className="w-28">
+                      <div className="mt-2 pl-9">
+                        <div className="w-full max-w-[170px]">
+                          <p className="mb-1 text-[11px] font-medium text-slate-600">จำนวนเงิน (บาท)</p>
                           <input
                             type="text"
                             inputMode="decimal"
                             disabled={!canEditSplitValue}
                             className="w-full px-2 py-1.5 text-sm border border-slate-200 rounded-lg bg-white text-gray-800 focus:outline-none focus:ring-2 focus:ring-[#fb8c00] disabled:bg-gray-100"
-                            placeholder="฿"
+                            placeholder="0.00"
                             value={participant.amount === '' ? '' : money(Number(participant.amount)).toFixed(2)}
                             onChange={(e) => {
                               const normalized = normalizeMoneyInput(e.target.value);
@@ -2062,3 +2081,4 @@ export default function CreatePercentPage() {
     </Suspense>
   );
 }
+

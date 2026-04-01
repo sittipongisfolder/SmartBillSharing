@@ -3,7 +3,6 @@ import { connectMongoDB } from '@/lib/mongodb';
 import Invite from '@/models/invite';
 import Bill from '@/models/bill';
 import { generateToken, hashToken } from '@/lib/tokens';
-import GuestSession from '@/models/guestSession';
 import GuestAccessLink from '@/models/guestAccessLink';
 
 export const runtime = 'nodejs';
@@ -50,13 +49,6 @@ export default async function InviteJoinPage({
 
   if (resolvedGuest?.guestId) {
     const rawAccessToken = generateToken(32);
-    const rawSession = generateToken(32);
-
-    await GuestSession.create({
-      guestId: resolvedGuest.guestId,
-      tokenHash: hashToken(rawSession),
-      expiresAt: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000),
-    });
 
     await GuestAccessLink.create({
       guestId: resolvedGuest.guestId,

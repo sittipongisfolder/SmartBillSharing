@@ -20,7 +20,7 @@ type SlipInfo = {
   provider?: string;
   reference?: string;
   checkedAt?: Date;
-  verified?: boolean;
+    verified?: boolean;
 };
 
 type ParticipantDoc = {

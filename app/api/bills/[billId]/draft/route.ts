@@ -443,6 +443,13 @@ export async function PATCH(req: NextRequest, context: RouteContext) {
         ? money(toNumber(body.totalPrice, 0))
         : itemsTotal;
 
+    if (!(effectiveTotal > 0)) {
+      return NextResponse.json(
+        { error: "ยอดรวมต้องมากกว่า 0 บาท" },
+        { status: 400 },
+      );
+    }
+
     if (nextSplitType === "equal") {
       const count = finalParticipants.length;
 

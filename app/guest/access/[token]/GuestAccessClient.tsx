@@ -67,7 +67,9 @@ export default function GuestAccessClient({
   };
 
   return (
-    <div className="mt-6 space-y-3">
+    
+    <div className="mt-6 space-y-3   ">
+      
       {billStage === 'draft' ? (
         <div className="rounded-2xl bg-amber-50 p-4 text-sm text-amber-800">
           คุณเข้าร่วมบิลแล้ว ระบบจะรีเฟรชอัตโนมัติทุก 5 วินาที

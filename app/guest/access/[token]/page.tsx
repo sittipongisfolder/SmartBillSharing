@@ -79,7 +79,17 @@ export default async function GuestAccessPage({
 
   if (!me) {
     return (
-      <div className="min-h-screen bg-[#f5f5f5] p-6">
+      <div className="min-h-screen bg-[#fbf7f1] p-6">
+        <header className="mx-auto mb-4 max-w-xl rounded-2xl border border-black/5 bg-white px-4 shadow-sm">
+          <div className="flex h-16 items-center justify-center sm:justify-start">
+            <div className="flex items-center gap-2">
+              <span className="inline-flex h-9 w-9 items-center justify-center rounded-lg bg-[#fb8c00]/10 text-[#fb8c00]">
+                <span className="text-lg">🍊</span>
+              </span>
+              <span className="font-semibold tracking-tight text-[#2f2f2f]">Smart Bill Sharing System</span>
+            </div>
+          </div>
+        </header>
         <div className="mx-auto max-w-xl rounded-2xl bg-white p-6 shadow">
           <h1 className="text-xl font-bold text-[#4a4a4a]">ไม่พบบัญชี Guest ในบิลนี้</h1>
           <p className="mt-3 text-sm text-gray-600">
@@ -96,7 +106,17 @@ export default async function GuestAccessPage({
   const billId = idToString(bill._id);
 
   return (
-    <div className="min-h-screen bg-[#f5f5f5] p-6">
+    <div className="min-h-screen bg-[#fbf7f1] p-6">
+      <header className="mx-auto mb-4 max-w-xl rounded-2xl border border-black/5 bg-white px-4 shadow-sm">
+        <div className="flex h-16 items-center justify-center sm:justify-start">
+          <div className="flex items-center gap-2">
+            <span className="inline-flex h-9 w-9 items-center justify-center rounded-lg bg-[#fb8c00]/10 text-[#fb8c00]">
+              <span className="text-lg">🍊</span>
+            </span>
+            <span className="font-semibold tracking-tight text-[#2f2f2f]">Smart Bill Sharing System</span>
+          </div>
+        </div>
+      </header>
       <div className="mx-auto max-w-2xl rounded-2xl bg-white p-6 shadow">
         <h1 className="text-2xl font-bold text-[#4a4a4a]">{bill.title}</h1>
         <p className="mt-1 text-sm text-gray-500">Guest: {me.name}</p>

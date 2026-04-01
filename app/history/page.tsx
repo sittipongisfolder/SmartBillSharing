@@ -1016,6 +1016,7 @@ function HistoryPageContent() {
 
   useEffect(() => {
     if (!targetBillId || loading || filtered.length === 0) return;
+    if (handledTargetBillRef.current === targetBillId) return;
 
     const targetIndex = filtered.findIndex((bill) => String(bill._id) === targetBillId);
     if (targetIndex === -1) return;
@@ -1033,7 +1034,6 @@ function HistoryPageContent() {
       }
     }
 
-    if (handledTargetBillRef.current === targetBillId) return;
     handledTargetBillRef.current = targetBillId;
 
     requestAnimationFrame(() => {

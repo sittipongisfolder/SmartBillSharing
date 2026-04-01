@@ -137,6 +137,7 @@ const normalizeMoneyInput = (v: string) => {
   const decPart = (decRaw || '').slice(0, 2);
 
   if (!intPart && decPart) return `0.${decPart}`;
+  if (noExtraDots.includes('.') && decPart === '') return `${intPart || '0'}.`;
   if (!decPart) return intPart;
   return `${intPart}.${decPart}`;
 };
@@ -280,9 +281,9 @@ function CreateBillPageInner() {
 
   useEffect(() => {
     async function fetchUsers() {
-      const token = localStorage.getItem('token');
+      
       const res = await fetch('/api/users', {
-        headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+        
       });
       const data = await res.json();
       setUsers(data);
@@ -361,7 +362,7 @@ function CreateBillPageInner() {
       setSelectedImagePreview(imagePreviewUrl);
       setOcrImageFile(compressed);
 
-      const token = localStorage.getItem('token');
+      
       const fd = new FormData();
       fd.append('file', compressed);
       if (draftBillId) {
@@ -370,7 +371,7 @@ function CreateBillPageInner() {
 
       const uploadRes = await fetch('/api/ocr/upload-receipt', {
         method: 'POST',
-        headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+        
         body: fd,
       });
 
@@ -409,7 +410,7 @@ function CreateBillPageInner() {
     setUploading(true);
 
     try {
-      const token = localStorage.getItem('token');
+      
 
       const compressed = await compressImage(picked);
       const fd = new FormData();
@@ -422,7 +423,7 @@ function CreateBillPageInner() {
       try {
         const res = await fetch('/api/ocr', {
           method: 'POST',
-          headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+          
           body: fd,
           signal: controller.signal,
         });
@@ -494,78 +495,11 @@ function CreateBillPageInner() {
     }
   };
 
-  const uploadReceiptImageIfNeeded = async (): Promise<{
-    receiptImageUrl: string;
-    receiptImagePublicId: string;
-  }> => {
-    const existingUrl = localStorage.getItem('ocrReceiptImageUrl') || '';
-    const existingPublicId = localStorage.getItem('ocrReceiptImagePublicId') || '';
-
-    if (existingUrl) {
-      return {
-        receiptImageUrl: existingUrl,
-        receiptImagePublicId: existingPublicId,
-      };
-    }
-
-    if (!ocrImageFile) {
-      return {
-        receiptImageUrl: '',
-        receiptImagePublicId: '',
-      };
-    }
-
-    const token = localStorage.getItem('token');
-    const fd = new FormData();
-    fd.append('file', ocrImageFile);
-    // ✅ Pass billId if available (will be set after draft is created)
-    if (draftBillId) {
-      fd.append('billId', draftBillId);
-    }
-
-    const uploadRes = await fetch('/api/ocr/upload-receipt', {
-      method: 'POST',
-      headers: token ? { Authorization: `Bearer ${token}` } : undefined,
-      body: fd,
-    });
-
-    if (!uploadRes.ok) {
-      throw new Error('อัปโหลดรูปบิลไม่สำเร็จ');
-    }
-
-    const uploadData = (await uploadRes.json()) as {
-      url?: string;
-      publicId?: string;
-    };
-
-    const receiptImageUrl = uploadData.url || '';
-    const receiptImagePublicId = uploadData.publicId || '';
-
-    if (receiptImageUrl) {
-      localStorage.setItem('ocrReceiptImageUrl', receiptImageUrl);
-      localStorage.setItem('ocrReceiptImagePublicId', receiptImagePublicId);
-    }
-
-    return {
-      receiptImageUrl,
-      receiptImagePublicId,
-    };
-  };
-
   const onAcceptOcr = async (accepted: OcrPreviewAcceptPayload) => {
     ocrPreview.setLoading(true);
 
     try {
-      let receiptImageUrl = '';
-      let receiptImagePublicId = '';
-
-      try {
-        const uploaded = await uploadReceiptImageIfNeeded();
-        receiptImageUrl = uploaded.receiptImageUrl;
-        receiptImagePublicId = uploaded.receiptImagePublicId;
-      } catch (uploadErr) {
-        console.error('Receipt upload failed:', uploadErr);
-      }
+      const pendingImageFile = ocrImageFile;
 
 
       const rawText = accepted.rawText || '';
@@ -644,7 +578,7 @@ function CreateBillPageInner() {
 
       // ✅ Set items ลงหน้า open bill
       if (finalItems.length > 0) {
-        setItemList([...finalItems, { items: '', qty: '1', price: '' }]);
+        setItemList(finalItems);
       } else {
         setItemList([{ items: '', qty: '1', price: '' }]);
       }
@@ -664,14 +598,40 @@ function CreateBillPageInner() {
         setTotalPrice(sumFromItems > 0 ? money(sumFromItems) : '');
       }
 
-      // ✅ เก็บรูปบิลไว้เหมือนเดิม
-      if (receiptImageUrl) {
-        localStorage.setItem('ocrReceiptImageUrl', receiptImageUrl);
-        localStorage.setItem('ocrReceiptImagePublicId', receiptImagePublicId);
-      }
-
       ocrPreview.closePreview();
       setOcrImageFile(null);
+
+      // อัปโหลดรูปบิลแบบเบื้องหลัง เพื่อให้ปุ่มตอบสนองทันที
+      if (pendingImageFile && !localStorage.getItem('ocrReceiptImageUrl')) {
+        void (async () => {
+          try {
+            const fd = new FormData();
+            fd.append('file', pendingImageFile);
+            if (draftBillId) {
+              fd.append('billId', draftBillId);
+            }
+
+            const uploadRes = await fetch('/api/ocr/upload-receipt', {
+              method: 'POST',
+              body: fd,
+            });
+
+            if (!uploadRes.ok) return;
+
+            const uploadData = (await uploadRes.json()) as {
+              url?: string;
+              publicId?: string;
+            };
+
+            if (uploadData.url) {
+              localStorage.setItem('ocrReceiptImageUrl', uploadData.url);
+              localStorage.setItem('ocrReceiptImagePublicId', uploadData.publicId || '');
+            }
+          } catch (uploadErr) {
+            console.error('Background receipt upload failed:', uploadErr);
+          }
+        })();
+      }
     } catch (err) {
       console.error('Accept OCR error:', err);
       alert('เกิดข้อผิดพลาดในการปรับปรุงข้อมูล');
@@ -681,39 +641,25 @@ function CreateBillPageInner() {
   };
 
   const onRejectOcr = async () => {
-    const shouldKeepReceipt = window.confirm(
-      'ไม่ใช้ข้อมูล OCR ใช่ไหม?\n\nกด OK = เก็บรูปบิลไว้ แต่ไม่ใช้ข้อมูล OCR\nกด Cancel = ไม่เก็บข้อมูล OCR แต่เก็บรูปบิล'
+    const keepReceiptImage = window.confirm(
+      'ไม่ใช้ข้อมูล OCR ใช่ไหม?\n\nกด OK = เก็บรูปบิลไว้สำหรับแนบตอนบันทึกบิล\nกด Cancel = ล้างรูปและข้อมูล OCR ทั้งหมด'
     );
 
-    ocrPreview.setLoading(true);
+    ocrPreview.closePreview();
 
-    try {
-      if (shouldKeepReceipt) {
-        await uploadReceiptImageIfNeeded();
-
-        ocrPreview.closePreview();
-        setOcrImageFile(null);
-
-        // คง preview รูปไว้ เพราะ user อยากเก็บรูปบิล
-        return;
-      }
-
-      ocrPreview.closePreview();
-      setOcrImageFile(null);
-      setSelectedFileName('');
-      setSelectedImagePreview(null);
-
-      localStorage.removeItem('ocrReceiptImageUrl');
-      localStorage.removeItem('ocrReceiptImagePublicId');
-
-      if (fileInputRef.current) fileInputRef.current.value = '';
-      if (directUploadInputRef.current) directUploadInputRef.current.value = '';
-    } catch (err) {
-      console.error('Keep receipt upload error:', err);
-      alert('เก็บรูปบิลไม่สำเร็จ');
-    } finally {
-      ocrPreview.setLoading(false);
+    if (keepReceiptImage) {
+      return;
     }
+
+    setOcrImageFile(null);
+    setSelectedFileName('');
+    setSelectedImagePreview(null);
+
+    localStorage.removeItem('ocrReceiptImageUrl');
+    localStorage.removeItem('ocrReceiptImagePublicId');
+
+    if (fileInputRef.current) fileInputRef.current.value = '';
+    if (directUploadInputRef.current) directUploadInputRef.current.value = '';
   };
 
   const resetForm = () => {
@@ -1001,6 +947,9 @@ function CreateBillPageInner() {
     if (payload.participants.length === 0) {
       throw new Error('กรุณาเลือก Participants อย่างน้อย 1 คน');
     }
+    if (!(Number(payload.totalPrice) > 0)) {
+      throw new Error('ยอดรวมต้องมากกว่า 0 บาท');
+    }
 
     return payload;
   };
@@ -1029,7 +978,7 @@ function CreateBillPageInner() {
     billId: string;
     dbParticipants?: DraftDbParticipant[];
   }> => {
-    const token = localStorage.getItem('token');
+    
     const draftPayload = buildDraftPayload();
 
     if (!draftBillId) {
@@ -1039,7 +988,7 @@ function CreateBillPageInner() {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
-            ...(token ? { Authorization: `Bearer ${token}` } : {}),
+            
           },
           body: JSON.stringify(draftPayload),
         });
@@ -1089,7 +1038,7 @@ function CreateBillPageInner() {
         method: 'PATCH',
         headers: {
           'Content-Type': 'application/json',
-          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+          
         },
         body: JSON.stringify(draftPayload),
       });
@@ -1131,10 +1080,10 @@ function CreateBillPageInner() {
   };
 
   const fetchDraftParticipants = async (billId: string): Promise<DraftDbParticipant[]> => {
-    const token = localStorage.getItem('token');
+    
 
     const res = await fetch(`/api/bills/${billId}`, {
-      headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+      
       cache: 'no-store',
     });
 
@@ -1256,7 +1205,7 @@ function CreateBillPageInner() {
         return;
       }
 
-      const token = localStorage.getItem('token');
+      
       const localTarget = participants.find((p) => p.localId === participantLocalId);
 
       if (!localTarget) {
@@ -1285,7 +1234,7 @@ function CreateBillPageInner() {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+          
         },
         body: JSON.stringify({
           participantId,
@@ -1330,7 +1279,7 @@ function CreateBillPageInner() {
     setSubmitting(true);
 
     try {
-      const token = localStorage.getItem('token');
+      
       const payload = buildSubmitPayload();
 
       const endpoint = draftBillId ? `/api/bills/${draftBillId}/publish` : '/api/bills';
@@ -1340,7 +1289,7 @@ function CreateBillPageInner() {
         method,
         headers: {
           'Content-Type': 'application/json',
-          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+          
         },
         body: JSON.stringify({
           ...payload,
@@ -1839,3 +1788,4 @@ export default function CreateBillPage() {
     </Suspense>
   );
 }
+

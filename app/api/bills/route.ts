@@ -203,6 +203,13 @@ export async function POST(req: NextRequest) {
         ? Number(totalPrice)
         : itemsTotal;
 
+    if (!(finalTotal > 0)) {
+      return NextResponse.json(
+        { error: "totalPrice must be greater than 0" },
+        { status: 400 },
+      );
+    }
+
     const billStatus = computeBillStatusHybrid(cleanedParticipants, userId);
 
     const newBill = await Bill.create({

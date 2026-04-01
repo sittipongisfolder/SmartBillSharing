@@ -3,7 +3,6 @@ import { NextResponse } from "next/server";
 import { connectMongoDB } from "@/lib/mongodb";
 import Invite from "@/models/invite";
 import Guest from "@/models/guest";
-import GuestSession from "@/models/guestSession";
 import GuestAccessLink from "@/models/guestAccessLink";
 import Bill from "@/models/bill";
 import { generateToken, hashToken } from "@/lib/tokens";
@@ -136,20 +135,11 @@ export async function POST(req: Request) {
     );
   }
 
-  const rawSession = generateToken(32);
-  const sessionHash = hashToken(rawSession);
   const rawAccessToken = generateToken(32);
   const accessTokenHash = hashToken(rawAccessToken);
   const expiresAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000);
-  const isHttps = req.headers.get("x-forwarded-proto") === "https";
 
   const redirectToGuestAccess = async (guestId: unknown) => {
-    await GuestSession.create({
-      guestId,
-      tokenHash: sessionHash,
-      expiresAt,
-    });
-
     await GuestAccessLink.create({
       guestId,
       billId: bill._id,
@@ -162,14 +152,6 @@ export async function POST(req: Request) {
     const res = NextResponse.redirect(
       new URL(`/guest/access/${rawAccessToken}?inviteToken=${encodeURIComponent(token)}`, req.url),
     );
-
-    res.cookies.set("sb_guest", rawSession, {
-      httpOnly: true,
-      sameSite: "lax",
-      secure: isHttps,
-      path: "/",
-      maxAge: 30 * 24 * 60 * 60,
-    });
 
     return res;
   };

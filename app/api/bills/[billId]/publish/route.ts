@@ -473,6 +473,13 @@ export async function PATCH(req: NextRequest, context: RouteContext) {
         ? money(toNumber(body.totalPrice, 0))
         : itemsTotal;
 
+    if (!(effectiveTotal > 0)) {
+      return NextResponse.json(
+        { error: "ยอดรวมต้องมากกว่า 0 บาท" },
+        { status: 400 },
+      );
+    }
+
     let finalParticipants: ParticipantInput[] = [...mergedParticipants];
 
     if (nextSplitType === "equal") {

@@ -4,7 +4,7 @@ import { useSearchParams } from 'next/navigation';
 import { Suspense, useEffect, useMemo, useRef, useState, type ChangeEvent } from 'react';
 import { CheckCircleIcon } from '@heroicons/react/24/solid';
 import { useSession } from 'next-auth/react';
-import { OcrPreviewModal } from '@/components/OcrPreviewModal';
+import { OcrPreviewModal, type OcrPreviewAcceptPayload } from '@/components/OcrPreviewModal';
 import { useOcrPreview } from '@/lib/useOcrPreview';
 import { AddParticipantDropdown } from '@/components/AddParticipantDropdown';
 import Image from 'next/image';
@@ -117,6 +117,7 @@ const normalizeMoneyInput = (v: string) => {
   const decPart = (decRaw || '').slice(0, 2);
 
   if (!intPart && decPart) return `0.${decPart}`;
+  if (noExtraDots.includes('.') && decPart === '') return `${intPart || '0'}.`;
   if (!decPart) return intPart;
   return `${intPart}.${decPart}`;
 };
@@ -395,7 +396,7 @@ function CreateBillPersonalPageInner() {
       setSelectedImagePreview(imagePreviewUrl);
       setOcrImageFile(compressed);
 
-      const token = localStorage.getItem('token');
+      
       const fd = new FormData();
       fd.append('file', compressed);
       if (draftBillId) {
@@ -404,7 +405,7 @@ function CreateBillPersonalPageInner() {
 
       const uploadRes = await fetch('/api/ocr/upload-receipt', {
         method: 'POST',
-        headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+        
         body: fd,
       });
 
@@ -632,33 +633,6 @@ function CreateBillPersonalPageInner() {
     );
   };
 
-  const assignUnassignedToMe = () => {
-    const me = getMeByEmail(users, currentUserEmail);
-    if (!me) return;
-
-    const myParticipant = participants.find(
-      (p) => p.kind === 'user' && p.userId === me._id
-    );
-    if (!myParticipant) return;
-
-    setItemList((prev) =>
-      prev.map((it) =>
-        !it.ownerId && it.items.trim()
-          ? { ...it, ownerId: myParticipant.localId, sharedWith: [] }
-          : it
-      )
-    );
-  };
-
-  const assignAllShared = () => {
-    setItemList((prev) =>
-      prev.map((it) => {
-        if (!it.items.trim()) return it;
-        return { ...it, ownerId: '__shared__', sharedWith: selectedIds };
-      })
-    );
-  };
-
   const resetForm = () => {
     const me = getMeByEmail(users, currentUserEmail);
 
@@ -782,41 +756,19 @@ function CreateBillPersonalPageInner() {
     }
   };
 
-  const onAcceptOcr = async () => {
+  const onAcceptOcr = async (accepted: OcrPreviewAcceptPayload) => {
     ocrPreview.setLoading(true);
 
     try {
-      let receiptImageUrl = '';
-      let receiptImagePublicId = '';
+      const pendingImageFile = ocrImageFile;
 
       // ✅ Upload receipt image to Cloudinary if file exists
-      if (ocrImageFile) {
-        try {
-          const fd = new FormData();
-          fd.append('file', ocrImageFile);
+      // ย้ายไปอัปโหลดแบบเบื้องหลังหลังจากปิด modal เพื่อให้กดปุ่มแล้วตอบสนองทันที
 
-          const uploadRes = await fetch('/api/ocr/upload-receipt', {
-            method: 'POST',
-            credentials: 'include',
-            body: fd,
-          });
-
-          if (uploadRes.ok) {
-            const uploadData = await uploadRes.json();
-            receiptImageUrl = uploadData.url || '';
-            receiptImagePublicId = uploadData.publicId || '';
-          }
-        } catch (uploadErr) {
-          console.error('Receipt upload failed:', uploadErr);
-          // Continue even if upload fails
-        }
-      }
-
-      const previewData = ocrPreview.previewData;
-      const rawText = previewData.rawText || '';
+      const rawText = accepted.rawText || '';
 
       // ✅ Set title from preview
-      const ocrTitle = previewData.title?.trim();
+      const ocrTitle = accepted.title?.trim();
       if (ocrTitle) {
         setTitle((prev) => (prev.trim() ? prev : ocrTitle));
       }
@@ -831,7 +783,7 @@ function CreateBillPersonalPageInner() {
         participants[0]?.localId ||
         '';
 
-      const mappedFromParsed: ItemRow[] = previewData.items
+      const mappedFromParsed: ItemRow[] = accepted.selectedItems
         .map((it) => {
           const name = sanitizeItemText(String(it?.name ?? '').trim());
           if (!name) return null;
@@ -909,14 +861,37 @@ function CreateBillPersonalPageInner() {
         ]);
       }
 
-      // ✅ Store receipt image info (will be saved when bill is created)
-      if (receiptImageUrl) {
-        localStorage.setItem('ocrReceiptImageUrl', receiptImageUrl);
-        localStorage.setItem('ocrReceiptImagePublicId', receiptImagePublicId);
-      }
-
       ocrPreview.closePreview();
       setOcrImageFile(null);
+
+      if (pendingImageFile && !localStorage.getItem('ocrReceiptImageUrl')) {
+        void (async () => {
+          try {
+            const fd = new FormData();
+            fd.append('file', pendingImageFile);
+
+            const uploadRes = await fetch('/api/ocr/upload-receipt', {
+              method: 'POST',
+              credentials: 'include',
+              body: fd,
+            });
+
+            if (!uploadRes.ok) return;
+
+            const uploadData = (await uploadRes.json()) as {
+              url?: string;
+              publicId?: string;
+            };
+
+            if (uploadData.url) {
+              localStorage.setItem('ocrReceiptImageUrl', uploadData.url);
+              localStorage.setItem('ocrReceiptImagePublicId', uploadData.publicId || '');
+            }
+          } catch (uploadErr) {
+            console.error('Background receipt upload failed:', uploadErr);
+          }
+        })();
+      }
     } catch (err) {
       console.error('Accept OCR error:', err);
       alert('เกิดข้อผิดพลาดในการปรับปรุงข้อมูล');
@@ -1639,22 +1614,6 @@ function CreateBillPersonalPageInner() {
             >
               ➕ เพิ่มรายการอาหาร
             </button>
-
-            <button
-              type="button"
-              onClick={assignUnassignedToMe}
-              className={`${btnGhost} w-full sm:w-auto !text-gray-700 hover:!text-gray-900`}
-            >
-              กำหนดช่องว่างให้ฉัน
-            </button>
-
-            <button
-              type="button"
-              onClick={assignAllShared}
-              className={`${btnGhost} w-full sm:w-auto !text-gray-700 hover:!text-gray-900`}
-            >
-              ตั้งทุกรายการเป็นหารร่วมกัน
-            </button>
           </div>
 
           <p className="mt-2 text-xs text-gray-400">
@@ -1929,3 +1888,4 @@ export default function CreatePersonalPage() {
     </Suspense>
   );
 }
+

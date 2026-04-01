@@ -231,6 +231,13 @@ export async function POST(req: NextRequest) {
         ? money(toNumber(body.totalPrice, 0))
         : itemsTotal;
 
+    if (!(totalPrice > 0)) {
+      return NextResponse.json(
+        { error: "ยอดรวมต้องมากกว่า 0 บาท" },
+        { status: 400 },
+      );
+    }
+
     if (body.splitType === "equal") {
       const count = participants.length;
 

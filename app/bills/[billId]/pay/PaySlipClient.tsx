@@ -184,6 +184,7 @@ export default function PaySlipClient({ billId, forcedGuestAccessToken }: { bill
 
   // State สำหรับเก็บ Tip
   const [tip, setTip] = useState<number>(0);
+  const [currentPaymentStatus, setCurrentPaymentStatus] = useState<PaymentStatus>('unpaid');
 
   // ---------- QR ----------
   const [qrDataUrl, setQrDataUrl] = useState<string | null>(null);
@@ -221,6 +222,7 @@ export default function PaySlipClient({ billId, forcedGuestAccessToken }: { bill
             setBillTitle('');
             setMyShare(0);
             setViewerName('');
+            setCurrentPaymentStatus('unpaid');
             return;
           }
 
@@ -234,6 +236,7 @@ export default function PaySlipClient({ billId, forcedGuestAccessToken }: { bill
           setOwner(createdByObj);
           setMyShare(Number(json.guest.amount) || 0);
           setViewerName(json.guest.name ?? 'Guest');
+          setCurrentPaymentStatus(json.guest.paymentStatus ?? 'unpaid');
           return;
         }
 
@@ -250,6 +253,7 @@ export default function PaySlipClient({ billId, forcedGuestAccessToken }: { bill
           setBillTitle('');
           setMyShare(0);
           setViewerName('');
+          setCurrentPaymentStatus('unpaid');
           return;
         }
 
@@ -267,9 +271,11 @@ export default function PaySlipClient({ billId, forcedGuestAccessToken }: { bill
           const me = b.participants.find((p) => getUserId(p.userId) === myUserId);
           setMyShare(Number(me?.amount) || 0);
           setViewerName(me?.name ?? session?.user?.name ?? '');
+          setCurrentPaymentStatus(me?.paymentStatus ?? 'unpaid');
         } else {
           setMyShare(0);
           setViewerName('');
+          setCurrentPaymentStatus('unpaid');
         }
       } catch {
         if (!alive) return;
@@ -277,6 +283,7 @@ export default function PaySlipClient({ billId, forcedGuestAccessToken }: { bill
         setBillTitle('');
         setMyShare(0);
         setViewerName('');
+        setCurrentPaymentStatus('unpaid');
       }
     })();
 
@@ -331,28 +338,49 @@ export default function PaySlipClient({ billId, forcedGuestAccessToken }: { bill
     };
   }, [owner?.promptPayPhone, myShare, tip]);
 
-  const canSubmit = useMemo(() => Boolean(file) && !loading, [file, loading]);
+  const isAlreadyPaid = currentPaymentStatus === 'paid';
+  const canSubmit = useMemo(() => Boolean(file) && !loading && !isAlreadyPaid, [file, loading, isAlreadyPaid]);
 
-  function handleSaveQr() {
+  async function handleSaveQr() {
     if (!qrDataUrl) return;
 
-    // iOS Safari does not support <a download> for data URLs — open in new tab so user can long-press to save
-    const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) && !(window as unknown as Record<string, unknown>).MSStream;
-    if (isIOS) {
-      window.open(qrDataUrl, '_blank');
-      return;
+    const fileName = `promptpay-qr-${billId}.png`;
+
+    // Convert data URL to Blob
+    const res = await fetch(qrDataUrl);
+    const blob = await res.blob();
+    const file = new File([blob], fileName, { type: 'image/png' });
+
+    // Use native Share Sheet (like Grab / Line) — works on iOS & Android
+    if (navigator.share && navigator.canShare?.({ files: [file] })) {
+      try {
+        await navigator.share({
+          files: [file],
+          title: 'PromptPay QR Code',
+        });
+        return;
+      } catch {
+        // User cancelled share — fall through to download
+      }
     }
 
-    const link = document.createElement('a');
-    link.href = qrDataUrl;
-    link.download = `promptpay-qr-${billId}.png`;
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
+    // Fallback: direct download for desktop browsers
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = fileName;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
   }
 
   async function onSubmit() {
     if (!file) return;
+    if (isAlreadyPaid) {
+      setResult({ ok: false, message: 'Guest นี้ได้ทำการจ่ายแล้ว' });
+      return;
+    }
 
     clearTimers();
     setLoading(true);
@@ -495,6 +523,12 @@ export default function PaySlipClient({ billId, forcedGuestAccessToken }: { bill
       <div className="max-w-6xl mx-auto px-4 py-6 space-y-5">
         {/* Pay to PromptPay + QR */}
         <div className="bg-white rounded-2xl shadow-sm border p-5">
+          {isGuestMode && isAlreadyPaid ? (
+            <div className="mb-4 rounded-2xl border bg-green-50 text-green-800 px-4 py-3 text-sm font-medium">
+              Guest นี้ได้ทำการจ่ายแล้ว
+            </div>
+          ) : null}
+
           <div className="text-lg font-bold text-gray-800 mb-4">ชำระไปยัง (PromptPay)</div>
 
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
@@ -573,18 +607,19 @@ export default function PaySlipClient({ billId, forcedGuestAccessToken }: { bill
                     <span className="text-[#fb8c00]">{formatMoneyTHB(myShare + tip)}</span>
                   </p>
 
-                  <div className="mt-4 flex gap-3">
-                    <button
-                      type="button"
-                      onClick={handleSaveQr}
-                      className="px-4 py-2 rounded-xl bg-[#fb8c00] hover:bg-[#e65100] text-white text-sm font-semibold transition"
-                    >
-                      บันทึกรูป QR
-                    </button>
-                  </div>
+                  <button
+                    type="button"
+                    onClick={handleSaveQr}
+                    className="mt-4 inline-flex items-center gap-2 px-5 py-2.5 rounded-xl bg-[#fb8c00] hover:bg-[#e65100] text-white text-sm font-semibold transition active:scale-95"
+                  >
+                    <svg xmlns="http://www.w3.org/2000/svg" className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M4 16v2a2 2 0 002 2h12a2 2 0 002-2v-2M7 10l5 5m0 0l5-5m-5 5V3" />
+                    </svg>
+                    บันทึก QR
+                  </button>
 
-                  <p className="text-red-500 mt-2 p-1">
-                    * กรุณานำสลิปที่จ่ายแล้วมาแนบเพื่อตรวจสอบ
+                  <p className="text-red-600 mt-3 text-xs sm:text-sm font-medium">
+                    * บันทึก QR แล้วไปโอนเงินใน App ธนาคาร จากนั้นกลับมาแนบสลิปที่ด้านล่าง
                   </p>
                 </>
               ) : (
@@ -599,16 +634,8 @@ export default function PaySlipClient({ billId, forcedGuestAccessToken }: { bill
 
         {/* ORIGINAL RECEIPT + verify */}
         <div className="bg-white rounded-2xl shadow-sm border overflow-hidden">
-          <div className="flex items-center justify-between px-5 py-4 border-b">
+          <div className="px-5 py-4 border-b">
             <div className="font-semibold text-gray-800">แนบสลิปการโอนเงิน</div>
-
-            <button
-              type="button"
-              onClick={() => fileInputRef.current?.click()}
-              className="inline-flex items-center gap-2 text-sm text-gray-600 cursor-pointer px-4 py-2 rounded-xl border bg-white hover:bg-gray-50 active:scale-95 transition"
-            >
-              เลือกไฟล์
-            </button>
             <input
               ref={fileInputRef}
               type="file"
@@ -631,7 +658,13 @@ export default function PaySlipClient({ billId, forcedGuestAccessToken }: { bill
                 <button
                   type="button"
                   onClick={() => fileInputRef.current?.click()}
-                  className="w-full h-56 sm:h-[520px] flex flex-col items-center justify-center gap-3 text-gray-400 text-sm cursor-pointer hover:bg-gray-100 active:bg-gray-200 transition"
+                  disabled={isAlreadyPaid}
+                  className={cx(
+                    'w-full h-56 sm:h-[520px] flex flex-col items-center justify-center gap-3 text-sm transition',
+                    isAlreadyPaid
+                      ? 'text-gray-300 cursor-not-allowed bg-gray-100'
+                      : 'text-gray-400 cursor-pointer hover:bg-gray-100 active:bg-gray-200'
+                  )}
                 >
                   <svg xmlns="http://www.w3.org/2000/svg" className="w-10 h-10 text-gray-300" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
                     <path strokeLinecap="round" strokeLinejoin="round" d="M3 16l4-4 4 4 4-6 4 6" />
