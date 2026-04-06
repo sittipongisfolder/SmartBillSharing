@@ -133,6 +133,7 @@ function LoginContent() {
               <div className="relative">
                 <input
                   className="peer h-12 w-full border border-gray-300 rounded-lg text-[var(--text-color)]  focus:outline-none focus:ring-2 focus:ring-[var(--brand-primary)] focus:border-transparent px-4"
+                  id="password"
                   name="password"
                   type={showPassword ? 'text' : 'password'}
                   placeholder="••••••••"
@@ -143,11 +144,10 @@ function LoginContent() {
 
                 <button
                   type="button"
-                  onMouseDown={() => setShowPassword(true)}
-                  onMouseUp={() => setShowPassword(false)}
-                  onMouseLeave={() => setShowPassword(false)}
+                  onClick={() => setShowPassword((current) => !current)}
                   className="absolute right-4 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600"
-                  aria-label="toggle password"
+                  aria-label={showPassword ? 'hide password' : 'show password'}
+                  aria-pressed={showPassword}
                 >
                   {showPassword ? <FaEye /> : <FaEyeSlash />}
                 </button>
