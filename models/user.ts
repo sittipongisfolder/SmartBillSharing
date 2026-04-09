@@ -7,11 +7,6 @@ type LineInfo = {
   linkedAt: Date | null; // เวลาที่ผูกสำเร็จ
 };
 
-type FriendRequests = {
-  incoming: string[]; // รหัสผู้ใช้ที่ส่งคำขอมา
-  outgoing: string[]; // รหัสผู้ใช้ที่เราส่งคำขอไป
-};
-
 interface IUser extends Document {
   name: string;
   email: string;
@@ -22,18 +17,14 @@ interface IUser extends Document {
   bank: string;
   bankAccountNumber: string;
 
-  // ✅ บังคับ PromptPay (เบอร์โทรอย่างเดียว)
-  promptPayPhone: string;
+  // ✅ PromptPay ไม่บังคับ
+  promptPayPhone?: string;
 
   role?: UserRole;
 
   // ✅ เพิ่มสำหรับ LINE OA
   line?: LineInfo;
   lineNotifyEnabled?: boolean;
-
-  // ✅ Friend System
-  friends?: string[];
-  friendRequests?: FriendRequests;
 }
 
 const userSchema: Schema<IUser> = new Schema(
@@ -61,14 +52,15 @@ const userSchema: Schema<IUser> = new Schema(
       type: String,
       required: true,
       trim: true,
-      match: [/^\d{10}$/, "bankAccountNumber must be 10 digits"],
+      match: [/^\d{10,12}$/, "bankAccountNumber must be 10-12 digits"],
     },
 
     promptPayPhone: {
       type: String,
-      required: true,
+      required: false,
       trim: true,
       unique: true,
+      sparse: true,
       index: true,
       match: [/^0\d{9}$/, "promptPayPhone must be 10 digits and start with 0"],
     },
@@ -83,29 +75,6 @@ const userSchema: Schema<IUser> = new Schema(
 
     // ✅ เปิด/ปิดแจ้งเตือน LINE (ใช้กับ lineNotifyEnabled)
     lineNotifyEnabled: { type: Boolean, default: false },
-
-    // ✅ Friend System
-    friends: [
-      {
-        type: mongoose.Schema.Types.ObjectId,
-        ref: "User",
-      },
-    ],
-
-    friendRequests: {
-      incoming: [
-        {
-          type: mongoose.Schema.Types.ObjectId,
-          ref: "User",
-        },
-      ],
-      outgoing: [
-        {
-          type: mongoose.Schema.Types.ObjectId,
-          ref: "User",
-        },
-      ],
-    },
   },
   { timestamps: true },
 );

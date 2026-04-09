@@ -14,7 +14,12 @@ type PatchBody = {
   promptPayPhone?: string;
 };
 
-const BANKS = ['กสิกรไทย', 'กรุงไทย', 'กรุงเทพ', 'ไทยพาณิชย์', 'พร้อมเพย์'];
+const BANKS = [
+  'กสิกรไทย', 'กรุงไทย', 'กรุงเทพ', 'ไทยพาณิชย์', 'กรุงศรีอยุธยา',
+  'ทหารไทยธนชาต (ttb)', 'ออมสิน', 'ธ.ก.ส.', 'ยูโอบี (UOB)',
+  'ซีไอเอ็มบี ไทย (CIMB Thai)', 'เกียรตินาคินภัทร (KKP)',
+  'แลนด์ แอนด์ เฮ้าส์ (LH Bank)', 'ไอซีบีซี (ICBC Thai)', 'สแตนดาร์ดชาร์เตอร์ด (ไทย)',
+];
 
 export async function GET() {
   try {
@@ -74,27 +79,48 @@ export async function PATCH(req: Request) {
     }
 
     if (bankAccountNumber !== undefined) {
-      if (!/^\d{10}$/.test(bankAccountNumber)) {
+      if (!/^\d{10,12}$/.test(bankAccountNumber)) {
         return NextResponse.json(
-          { ok: false, message: 'กรุณากรอกเลขบัญชี/เบอร์โทร 10 หลัก (ตัวเลขเท่านั้น)' },
+          { ok: false, message: 'กรุณากรอกเลขบัญชี 10-12 หลัก (ตัวเลขเท่านั้น)' },
           { status: 400 }
         );
       }
     }
 
-    const update: Record<string, string> = {};
-    if (name) update.name = name;
-    if (bank) update.bank = bank;
-    if (bankAccountNumber) update.bankAccountNumber = bankAccountNumber;
-    if (promptPayPhone) update.promptPayPhone = promptPayPhone;
+    const updateSet: Record<string, string> = {};
+    const updateUnset: Record<string, ''> = {};
 
-    if (Object.keys(update).length === 0) {
+    if (name) updateSet.name = name;
+    if (bank) updateSet.bank = bank;
+    if (bankAccountNumber) updateSet.bankAccountNumber = bankAccountNumber;
+    if (promptPayPhone !== undefined) {
+      if (promptPayPhone.length > 0 && !/^0\d{9}$/.test(promptPayPhone)) {
+        return NextResponse.json(
+          { ok: false, message: 'กรุณากรอกเบอร์พร้อมเพย์ 10 หลัก (ตัวเลขเท่านั้น)' },
+          { status: 400 }
+        );
+      }
+
+      if (promptPayPhone.length > 0) {
+        updateSet.promptPayPhone = promptPayPhone;
+      } else {
+        updateUnset.promptPayPhone = '';
+      }
+    }
+
+    if (Object.keys(updateSet).length === 0 && Object.keys(updateUnset).length === 0) {
       return NextResponse.json({ ok: false, message: 'ไม่มีข้อมูลให้อัปเดต' }, { status: 400 });
     }
 
     await connectMongoDB();
 
-    const res = await User.updateOne({ email: session.user.email }, { $set: update });
+    const res = await User.updateOne(
+      { email: session.user.email },
+      {
+        ...(Object.keys(updateSet).length > 0 ? { $set: updateSet } : {}),
+        ...(Object.keys(updateUnset).length > 0 ? { $unset: updateUnset } : {}),
+      }
+    );
     if (res.matchedCount === 0) {
       return NextResponse.json({ ok: false, message: 'ไม่พบบัญชีผู้ใช้' }, { status: 404 });
     }

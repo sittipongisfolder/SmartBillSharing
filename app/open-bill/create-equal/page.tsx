@@ -1,10 +1,11 @@
 'use client';
 
-import { useSearchParams } from 'next/navigation';
 import { Suspense, useEffect, useMemo, useRef, useState, type ChangeEvent } from 'react';
 import { CheckCircleIcon } from '@heroicons/react/24/solid';
+import { MagnifyingGlassPlusIcon } from '@heroicons/react/24/outline';
 import { useSession } from 'next-auth/react';
 import { OcrPreviewModal, type OcrPreviewAcceptPayload } from '@/components/OcrPreviewModal';
+import { ImageZoomModal } from '@/components/ImageZoomModal';
 import { useOcrPreview } from '@/lib/useOcrPreview';
 import { AddParticipantDropdown } from '@/components/AddParticipantDropdown';
 import Image from 'next/image';
@@ -160,15 +161,8 @@ const btnDanger =
   'inline-flex items-center justify-center gap-2 rounded-xl border border-red-200 bg-red-50 px-4 py-2.5 text-sm font-medium text-red-600 transition hover:border-red-300 hover:bg-red-100 disabled:cursor-not-allowed disabled:opacity-50';
 
 function CreateBillPageInner() {
-  const searchParams = useSearchParams();
-  const splitTypeRaw = searchParams.get('type');
-  const splitType = (splitTypeRaw as SplitType) || 'equal';
-  const splitTypeLabel =
-    splitType === 'equal'
-      ? 'หารเท่ากัน'
-      : splitType === 'percentage'
-        ? 'หารตามเปอร์เซ็นต์'
-        : 'หารตามรายการ';
+  const splitType = 'equal' as SplitType;
+  const splitTypeLabel = 'หารเท่ากัน';
 
   const [title, setTitle] = useState('');
   const [totalPrice, setTotalPrice] = useState<number | ''>('');
@@ -202,6 +196,7 @@ function CreateBillPageInner() {
   const ocrPreview = useOcrPreview();
   const [ocrImageFile, setOcrImageFile] = useState<File | null>(null);
   const [selectedImagePreview, setSelectedImagePreview] = useState<string | null>(null);
+  const [isSelectedImageZoomOpen, setIsSelectedImageZoomOpen] = useState(false);
 
   const [draftBillId, setDraftBillId] = useState('');
   const [inviteLinkByLocalId, setInviteLinkByLocalId] = useState<Record<string, string>>({});
@@ -254,8 +249,6 @@ function CreateBillPageInner() {
     ]);
   };
 
-  const isFiniteNumber = (n: unknown): n is number => typeof n === 'number' && Number.isFinite(n);
-
   const toNumber = (v: unknown, fallback = 0) => {
     const s = typeof v === 'number' ? String(v) : String(v ?? '');
     const n = Number(s.replace(/,/g, ''));
@@ -276,7 +269,7 @@ function CreateBillPageInner() {
       }),
     [participants]
   );
-
+  // ✅ ใช้ selectedParticipants ในการคำนวณ sharePerPerson แทน participants ปกติ
   const selectedCount = selectedParticipants.length;
 
   useEffect(() => {
@@ -355,7 +348,7 @@ function CreateBillPageInner() {
 
     setSelectedFileName(picked.name);
     setUploading(true);
-
+    
     try {
       const compressed = await compressImage(picked);
       const imagePreviewUrl = URL.createObjectURL(compressed);
@@ -408,7 +401,7 @@ function CreateBillPageInner() {
     localStorage.removeItem('ocrReceiptImagePublicId');
     setSelectedFileName(picked.name);
     setUploading(true);
-
+    // ocr function
     try {
       
 
@@ -693,6 +686,7 @@ function CreateBillPageInner() {
     );
     setSelectedFileName('');
     setSelectedImagePreview(null);
+    setIsSelectedImageZoomOpen(false);
     setTotalPrice('');
     setSharePerPerson(0);
     setUploading(false);
@@ -753,11 +747,6 @@ function CreateBillPageInner() {
   };
 
   useEffect(() => {
-    if (splitType !== 'equal') {
-      setSharePerPerson(0);
-      return;
-    }
-
     const t = typeof totalPrice === 'number' ? money(totalPrice) : 0;
 
     if (t > 0 && selectedCount > 0) {
@@ -777,62 +766,13 @@ function CreateBillPageInner() {
       setSharePerPerson(0);
       setParticipants((prev) => prev.map((p) => ({ ...p, amount: 0 })));
     }
-  }, [splitType, totalPrice, selectedCount]);
-
-  const percentKey = useMemo(
-    () => participants.map((p) => (p.percent === '' ? '' : String(p.percent))).join('|'),
-    [participants]
-  );
-
-  const totalPercent = useMemo(() => {
-    return round2(
-      selectedParticipants.reduce((sum, p) => sum + (isFiniteNumber(p.percent) ? p.percent : 0), 0)
-    );
-  }, [selectedParticipants]);
-
-  useEffect(() => {
-    if (splitType !== 'percentage') return;
-
-    const t = typeof totalPrice === 'number' ? money(totalPrice) : 0;
-    if (t <= 0) {
-      setParticipants((prev) => prev.map((p) => ({ ...p, amount: 0 })));
-      return;
-    }
-
-    setParticipants((prev) => {
-      const next = prev.map((p) => {
-        if (p.kind !== 'user' || !p.userId) return { ...p, amount: 0 };
-        const pct = isFiniteNumber(p.percent) ? p.percent : 0;
-        return { ...p, amount: money((t * pct) / 100) };
-      });
-
-      const sumAmt = money(next.reduce((s, p) => s + money(toNumber(p.amount, 0)), 0));
-      const diff = money(t - sumAmt);
-
-      if (diff !== 0) {
-        for (let i = next.length - 1; i >= 0; i--) {
-          if (next[i].kind === 'user' && next[i].userId) {
-            next[i] = { ...next[i], amount: money(money(toNumber(next[i].amount, 0)) + diff) };
-            break;
-          }
-        }
-      }
-
-      const same = prev.every((p, i) => p.amount === next[i].amount);
-      return same ? prev : next;
-    });
-  }, [splitType, totalPrice, percentKey, participants.length]);
+  }, [totalPrice, selectedCount]);
 
   const handleAmountChange = (e: ChangeEvent<HTMLInputElement>) => {
     const normalized = normalizeMoneyInput(e.target.value);
     if (normalized === '') setTotalPrice('');
     else setTotalPrice(money(Number(normalized)));
   };
-
-  const personalSum = useMemo(() => {
-    if (splitType !== 'personal') return 0;
-    return money(selectedParticipants.reduce((sum, p) => sum + money(toNumber(p.amount, 0)), 0));
-  }, [splitType, selectedParticipants]);
 
   const summary = useMemo(() => {
     const total = typeof totalPrice === 'number' && totalPrice > 0 ? money(totalPrice) : 0;
@@ -1318,6 +1258,23 @@ function CreateBillPageInner() {
       localStorage.removeItem('ocrReceiptImageUrl');
       localStorage.removeItem('ocrReceiptImagePublicId');
 
+      const billIdFromResponse = (() => {
+        if (!data || typeof data !== 'object') return '';
+        const result = data as {
+          bill?: { _id?: string };
+          billId?: string;
+          _id?: string;
+        };
+
+        return String(result.bill?._id ?? result.billId ?? result._id ?? '').trim();
+      })();
+
+      const targetBillId = billIdFromResponse || draftBillId;
+      if (targetBillId) {
+        window.location.assign(`/history?billId=${encodeURIComponent(targetBillId)}`);
+        return;
+      }
+
       resetForm();
     } catch (err) {
       const message = err instanceof Error ? err.message : 'เกิดข้อผิดพลาด';
@@ -1362,6 +1319,16 @@ function CreateBillPageInner() {
                     unoptimized
                     className="object-contain"
                   />
+
+                  <button
+                    type="button"
+                    onClick={() => setIsSelectedImageZoomOpen(true)}
+                    title="ซูมดูรูป"
+                    aria-label="ซูมดูรูป"
+                    className="absolute right-2 top-2 inline-flex h-9 w-9 items-center justify-center rounded-lg border border-gray-300 bg-white/95 text-gray-700 shadow-sm transition hover:bg-white"
+                  >
+                    <MagnifyingGlassPlusIcon className="h-5 w-5" />
+                  </button>
                 </div>
                 <p className="text-xs text-gray-500">
                   ไฟล์ที่เลือก: <span className="font-medium">{selectedFileName}</span>
@@ -1686,32 +1653,9 @@ function CreateBillPageInner() {
             <p className="text-lg text-[#4a4a4a]">รวมทั้งหมด</p>
             <p className="text-2xl font-semibold text-[#fb8c00]">{money(summary.total).toFixed(2)} ฿</p>
 
-            {splitType === 'equal' && (
-              <p className="text-xs text-gray-500 mt-1">
-                หารเท่ากัน: {selectedCount > 0 ? money(sharePerPerson).toFixed(2) : '0.00'} ฿/คน
-              </p>
-            )}
-
-            {splitType === 'percentage' && (
-              <p
-                className={`text-xs mt-1 ${Math.abs(totalPercent - 100) > 0.01 ? 'text-red-500' : 'text-green-600'
-                  }`}
-              >
-                รวมเปอร์เซ็นต์: {totalPercent}%{' '}
-                {Math.abs(totalPercent - 100) > 0.01 ? '(ควรเป็น 100%)' : '✓'}
-              </p>
-            )}
-
-            {splitType === 'personal' && (
-              <p
-                className={`text-xs mt-1 ${summary.total > 0 && Math.abs(personalSum - summary.total) > 0.01
-                  ? 'text-red-500'
-                  : 'text-gray-500'
-                  }`}
-              >
-                รวมที่กรอก: {money(personalSum).toFixed(2)} ฿
-              </p>
-            )}
+            <p className="text-xs text-gray-500 mt-1">
+              หารเท่ากัน: {selectedCount > 0 ? money(sharePerPerson).toFixed(2) : '0.00'} ฿/คน
+            </p>
           </div>
 
           <div className="mb-6">
@@ -1729,12 +1673,7 @@ function CreateBillPageInner() {
                       <div className="text-[#4a4a4a] min-w-0">
                         {p.name} ({summary.total > 0 ? p.percent.toFixed(0) : '0'}%)
                         <div className="text-xs text-gray-500">
-                          {splitType === 'equal'
-                            ? `หารเท่ากัน: ${selectedCount > 0 ? money(sharePerPerson).toFixed(2) : '0.00'
-                            } ฿`
-                            : splitType === 'percentage'
-                              ? `ตั้งไว้: ${p.percentInput.toFixed(2)}%`
-                              : `ใส่เอง: ${money(p.amount).toFixed(2)} ฿`}
+                          {`หารเท่ากัน: ${selectedCount > 0 ? money(sharePerPerson).toFixed(2) : '0.00'} ฿`}
                         </div>
                       </div>
                       <div className="text-[#4a4a4a] font-semibold whitespace-nowrap">{money(p.amount).toFixed(2)} ฿</div>
@@ -1776,6 +1715,13 @@ function CreateBillPageInner() {
         onAccept={onAcceptOcr}
         onReject={onRejectOcr}
         isLoading={ocrPreview.isLoading}
+      />
+
+      <ImageZoomModal
+        isOpen={isSelectedImageZoomOpen}
+        imageUrl={selectedImagePreview}
+        title={selectedFileName || 'รูปบิล'}
+        onClose={() => setIsSelectedImageZoomOpen(false)}
       />
     </div>
   );

@@ -10,7 +10,7 @@ type RegisterBody = {
   password?: unknown;
   bank?: unknown;
   bankAccountNumber?: unknown;
-  promptPayPhone?: unknown; // ✅ บังคับ
+  promptPayPhone?: unknown;
 };
 
 function isNonEmptyString(v: unknown): v is string {
@@ -22,9 +22,17 @@ function normalizePhone(v: string): string {
   return v.replace(/\D/g, "");
 }
 
+function normalizeDigits(v: string): string {
+  return v.replace(/\D/g, "");
+}
+
 function isThaiPhone10Digits(v: string): boolean {
   // 10 หลัก และขึ้นต้นด้วย 0 (เช่น 08x, 09x, 06x)
   return /^0\d{9}$/.test(v);
+}
+
+function isStrongPassword(v: string): boolean {
+  return /^(?=.*[A-Za-z])(?=.*\d).{8,}$/.test(v);
 }
 
 export async function POST(request: NextRequest) {
@@ -35,24 +43,30 @@ export async function POST(request: NextRequest) {
     const email = isNonEmptyString(body.email) ? body.email.trim().toLowerCase() : "";
     const password = isNonEmptyString(body.password) ? body.password : "";
     const bank = isNonEmptyString(body.bank) ? body.bank.trim() : "";
-    const bankAccountNumber = isNonEmptyString(body.bankAccountNumber)
-      ? body.bankAccountNumber.trim()
-      : "";
+    const bankAccountRaw = isNonEmptyString(body.bankAccountNumber) ? body.bankAccountNumber : "";
+    const bankAccountNumber = normalizeDigits(bankAccountRaw.trim());
     const promptPayPhoneRaw = isNonEmptyString(body.promptPayPhone) ? body.promptPayPhone : "";
 
-    // ✅ บังคับกรอกทุกช่อง + promptPayPhone
-    if (!username || !email || !password || !bank || !bankAccountNumber || !promptPayPhoneRaw) {
+    // ✅ บังคับเฉพาะข้อมูลหลัก (PromptPay ไม่บังคับ)
+    if (!username || !email || !password || !bank || !bankAccountNumber) {
       return NextResponse.json({ error: "กรุณากรอกข้อมูลให้ครบถ้วน" }, { status: 400 });
     }
 
-    // ✅ validate เลขบัญชี (ของเดิมคุณ)
-    if (!/^\d{10}$/.test(bankAccountNumber)) {
-      return NextResponse.json({ error: "กรุณากรอกหมายเลขบัญชีธนาคารให้ครบ 10 ตัว (ตัวเลขเท่านั้น)" }, { status: 400 });
+    if (!isStrongPassword(password)) {
+      return NextResponse.json(
+        { error: "รหัสผ่านต้องมีอย่างน้อย 8 ตัว และต้องมีทั้งตัวอักษรและตัวเลข" },
+        { status: 400 },
+      );
     }
 
-    // ✅ validate PromptPay เบอร์โทร 10 หลัก (เก็บเป็น string)
+    // ✅ validate เลขบัญชี 10-12 หลัก
+    if (!/^\d{10,12}$/.test(bankAccountNumber)) {
+      return NextResponse.json({ error: "กรุณากรอกหมายเลขบัญชีธนาคารให้ถูกต้อง (10-12 หลัก)" }, { status: 400 });
+    }
+
+    // ✅ validate PromptPay เฉพาะกรณีที่กรอก
     const promptPayPhone = normalizePhone(promptPayPhoneRaw);
-    if (!isThaiPhone10Digits(promptPayPhone)) {
+    if (promptPayPhone && !isThaiPhone10Digits(promptPayPhone)) {
       return NextResponse.json({ error: "กรุณากรอกเบอร์ PromptPay ให้ถูกต้อง (10 หลัก เช่น 08xxxxxxxx)" }, { status: 400 });
     }
 
@@ -70,10 +84,12 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "Username is already taken" }, { status: 400 });
     }
 
-    // ✅ (แนะนำ) กัน promptPayPhone ซ้ำด้วย
-    const existingPromptPay = await User.findOne({ promptPayPhone });
-    if (existingPromptPay) {
-      return NextResponse.json({ error: "PromptPay เบอร์นี้ถูกใช้งานแล้ว" }, { status: 400 });
+    // ✅ กัน promptPayPhone ซ้ำเฉพาะกรณีที่มีการกรอก
+    if (promptPayPhone) {
+      const existingPromptPay = await User.findOne({ promptPayPhone });
+      if (existingPromptPay) {
+        return NextResponse.json({ error: "PromptPay เบอร์นี้ถูกใช้งานแล้ว" }, { status: 400 });
+      }
     }
 
     const hashedPassword = await bcrypt.hash(password, 10);
@@ -84,7 +100,7 @@ export async function POST(request: NextRequest) {
       password: hashedPassword,
       bank,
       bankAccountNumber,
-      promptPayPhone, // ✅ เก็บจริง
+      promptPayPhone: promptPayPhone || undefined,
       role: "user",
     });
 

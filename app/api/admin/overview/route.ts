@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { getServerSession } from "next-auth/next"; //  แก้ตรงนี้
+import { getServerSession } from "next-auth/next";
 import { authOptions } from "@/lib/authOptions";
 import { connectMongoDB } from "@/lib/mongodb";
 import User from "@/models/user";
@@ -32,15 +32,8 @@ export async function GET() {
       User.countDocuments(),
       Bill.countDocuments(),
       Bill.countDocuments({ createdAt: { $gte: today } }),
-      Bill.countDocuments({
-        $or: [
-          { status: "open" },
-          { billStatus: { $in: ["unpaid", "pending"] } },
-        ],
-      }),
-      Bill.countDocuments({
-        $or: [{ status: "closed" }, { billStatus: { $in: ["paid"] } }],
-      }),
+      Bill.countDocuments({ billStatus: { $in: ["unpaid", "pending"] } }),
+      Bill.countDocuments({ billStatus: "paid" }),
     ]);
 
   return NextResponse.json({

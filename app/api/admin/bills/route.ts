@@ -15,7 +15,7 @@ const toInt = (v: string | null, fallback: number) => {
 };
 
 const pickOwnerId = (b: Record<string, unknown>): string | null => {
-  const raw = (b.ownerId ?? b.createdBy) as unknown;
+  const raw = b.createdBy as unknown;
   if (!raw) return null;
 
   if (typeof raw === "string") return raw;
@@ -69,7 +69,7 @@ export async function GET(req: Request) {
   const match: Record<string, unknown> = {};
   const and: Record<string, unknown>[] = [];
 
-  // ✅ ownerId filter (กัน null ก่อนสร้าง ObjectId)
+  // Canonical owner field: createdBy
   if (typeof ownerIdParam === "string" && ownerIdParam.trim()) {
     const ownerId = ownerIdParam.trim();
 
@@ -81,12 +81,12 @@ export async function GET(req: Request) {
     }
 
     const oid = new mongoose.Types.ObjectId(ownerId);
-    and.push({ $or: [{ ownerId: oid }, { createdBy: oid }] });
+    and.push({ createdBy: oid });
   }
 
-  // ✅ status filter (รองรับ status หรือ billStatus)
+  // Canonical status field: billStatus
   if (status) {
-    and.push({ $or: [{ status }, { billStatus: status }] });
+    and.push({ billStatus: status });
   }
 
   // ✅ splitType filter
@@ -94,13 +94,12 @@ export async function GET(req: Request) {
     match.splitType = splitType;
   }
 
-  // ✅ search q: title หรือ owner (name/email/userId)
+  // search q: title or owner(name/email)
   if (q) {
     const users = await User.find({
       $or: [
         { email: { $regex: q, $options: "i" } },
         { name: { $regex: q, $options: "i" } },
-        { userId: { $regex: q, $options: "i" } },
       ],
     })
       .select("_id")
@@ -117,9 +116,7 @@ export async function GET(req: Request) {
     and.push({
       $or: [
         { title: { $regex: q, $options: "i" } },
-        ...(ids.length
-          ? [{ ownerId: { $in: ids } }, { createdBy: { $in: ids } }]
-          : []),
+        ...(ids.length ? [{ createdBy: { $in: ids } }] : []),
       ],
     });
   }
@@ -179,12 +176,15 @@ export async function GET(req: Request) {
     const owner = ownerKey ? (ownerMap.get(ownerKey) ?? null) : null;
 
     const titleVal = typeof b.title === "string" ? b.title : "-";
-    const totalVal = typeof b.total === "number" ? b.total : null;
+    const totalVal =
+      typeof b.totalPrice === "number"
+        ? b.totalPrice
+        : typeof b.total === "number"
+          ? b.total
+          : null;
     const splitVal = typeof b.splitType === "string" ? b.splitType : null;
 
-    const st =
-      (typeof b.status === "string" ? b.status : null) ??
-      (typeof b.billStatus === "string" ? b.billStatus : null);
+    const st = typeof b.billStatus === "string" ? b.billStatus : null;
 
     const createdAt =
       typeof b.createdAt === "string"

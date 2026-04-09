@@ -118,6 +118,8 @@ const billSchema = new Schema(
 );
 
 billSchema.index({ stage: 1, createdBy: 1 });
+billSchema.index({ createdBy: 1 });
+billSchema.index({ billStatus: 1, createdAt: -1 });
 billSchema.index({ "participants.userId": 1 });
 billSchema.index({ "participants.guestId": 1 });
 billSchema.index({ "participants.kind": 1 });

@@ -23,6 +23,14 @@ export async function POST() {
 
   await connectMongoDB();
 
+  const exists = await User.exists({ _id: userId });
+  if (!exists) {
+    return NextResponse.json(
+      { ok: false, message: "LINE unlink is available for registered users only" },
+      { status: 403 },
+    );
+  }
+
   await User.updateOne(
     { _id: userId },
     {

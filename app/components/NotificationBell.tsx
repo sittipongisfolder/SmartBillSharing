@@ -135,17 +135,19 @@ export default function NotificationBell() {
 
   // ✅ ยอมรับคำขอเพื่อน
   const handleAcceptFriendRequest = async (notificationId: string, fromUserId?: string) => {
-    if (!fromUserId) return;
     try {
       setProcessingId(notificationId);
       const res = await fetch('/api/friends/accept', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ fromUserId }),
+        body: JSON.stringify({ fromUserId, notificationId }),
       });
       if (res.ok) {
         await fetchList(tab);
         alert('ยอมรับคำขอเพื่อนสำเร็จ');
+      } else {
+        const data = (await res.json().catch(() => null)) as { error?: string } | null;
+        alert(data?.error ?? 'ไม่สามารถยอมรับคำขอได้');
       }
     } catch (error) {
       console.error('Error accepting friend request:', error);
@@ -157,17 +159,19 @@ export default function NotificationBell() {
 
   // ✅ ปฏิเสธคำขอเพื่อน
   const handleRejectFriendRequest = async (notificationId: string, fromUserId?: string) => {
-    if (!fromUserId) return;
     try {
       setProcessingId(notificationId);
       const res = await fetch('/api/friends/reject', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ fromUserId }),
+        body: JSON.stringify({ fromUserId, notificationId }),
       });
       if (res.ok) {
         await fetchList(tab);
         alert('ปฏิเสธคำขอสำเร็จ');
+      } else {
+        const data = (await res.json().catch(() => null)) as { error?: string } | null;
+        alert(data?.error ?? 'ไม่สามารถปฏิเสธคำขอได้');
       }
     } catch (error) {
       console.error('Error rejecting friend request:', error);

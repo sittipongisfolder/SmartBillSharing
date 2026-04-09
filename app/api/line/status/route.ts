@@ -24,6 +24,12 @@ export async function GET() {
 
   await connectMongoDB();
   const u = await User.findById(userId).select("line lineNotifyEnabled");
+  if (!u) {
+    return NextResponse.json(
+      { ok: false, message: "LINE status is available for registered users only" },
+      { status: 403 },
+    );
+  }
 
   const linked = !!u?.line?.userId;
   return NextResponse.json({

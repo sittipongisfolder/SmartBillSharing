@@ -5,7 +5,7 @@ import Invite from "@/models/invite";
 import Guest from "@/models/guest";
 import GuestAccessLink from "@/models/guestAccessLink";
 import Bill from "@/models/bill";
-import { generateToken, hashToken } from "@/lib/tokens";
+import { generateToken, getInviteIdFromPublicToken, hashToken } from "@/lib/tokens";
 import { isString } from "@/lib/typeGuards";
 
 export const runtime = "nodejs";
@@ -96,13 +96,19 @@ export async function POST(req: Request) {
 
   await connectMongoDB();
 
-  const tokenHash = hashToken(token);
+  const inviteId = getInviteIdFromPublicToken(token);
 
-  const invite = await Invite.findOne({
-    tokenHash,
-    revoked: false,
-    $or: [{ expiresAt: null }, { expiresAt: { $gt: new Date() } }],
-  });
+  const invite = inviteId
+    ? await Invite.findOne({
+        _id: inviteId,
+        revoked: false,
+        $or: [{ expiresAt: null }, { expiresAt: { $gt: new Date() } }],
+      })
+    : await Invite.findOne({
+        tokenHash: hashToken(token),
+        revoked: false,
+        $or: [{ expiresAt: null }, { expiresAt: { $gt: new Date() } }],
+      });
 
   if (!invite) {
     return NextResponse.json(
@@ -157,6 +163,13 @@ export async function POST(req: Request) {
   };
 
   if (slot.kind === "guest" && slot.guestId) {
+    if (slot.paymentStatus === "paid") {
+      return NextResponse.json(
+        { error: "ลิงก์นี้สิ้นสุดแล้ว เนื่องจาก guest รายการนี้ชำระเงินเรียบร้อย" },
+        { status: 409 },
+      );
+    }
+
     if (!invite.guestId) {
       invite.guestId = slot.guestId;
       await invite.save();
@@ -210,7 +223,6 @@ export async function POST(req: Request) {
 
   await bill.save();
 
-  invite.usedCount += 1;
   invite.guestId = guest._id;
   await invite.save();
 

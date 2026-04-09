@@ -4,6 +4,7 @@ import { authOptions } from '@/lib/authOptions';
 import { connectMongoDB } from '@/lib/mongodb';
 import User from '@/models/user';
 import Notification from '@/models/notification';
+import FriendRelation from '@/models/friendRelation';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -36,7 +37,7 @@ export async function GET(req: Request) {
 
   await connectMongoDB();
 
-  const user = await User.findOne({ email: session.user.email }).select('_id friendRequests.incoming friends');
+  const user = await User.findOne({ email: session.user.email }).select('_id');
   if (!user) return NextResponse.json({ ok: false, message: 'User not found' }, { status: 404 });
 
   const where = { userId: user._id, ...(filter === 'unread' ? { isRead: false } : {}) };
@@ -50,20 +51,35 @@ export async function GET(req: Request) {
     Notification.countDocuments({ userId: user._id, isRead: false }),
   ]);
 
+  const [incomingRelations, acceptedRelations] = await Promise.all([
+    FriendRelation.find({ addresseeId: user._id, status: 'pending' })
+      .select('requesterId')
+      .lean(),
+    FriendRelation.find({
+      status: 'accepted',
+      $or: [{ requesterId: user._id }, { addresseeId: user._id }],
+    })
+      .select('requesterId addresseeId')
+      .lean(),
+  ]);
+
   const incomingSet = new Set(
-    Array.isArray((user as { friendRequests?: { incoming?: unknown[] } }).friendRequests?.incoming)
-      ? ((user as { friendRequests?: { incoming?: unknown[] } }).friendRequests?.incoming ?? [])
-          .map((v) => toIdString(v))
-          .filter((v): v is string => Boolean(v))
-      : []
+    incomingRelations
+      .map((relation) => toIdString((relation as { requesterId?: unknown }).requesterId))
+      .filter((id): id is string => Boolean(id)),
   );
 
+  const userId = String(user._id);
   const friendsSet = new Set(
-    Array.isArray((user as { friends?: unknown[] }).friends)
-      ? ((user as { friends?: unknown[] }).friends ?? [])
-          .map((v) => toIdString(v))
-          .filter((v): v is string => Boolean(v))
-      : []
+    acceptedRelations
+      .map((relation) => {
+        const requester = String((relation as { requesterId?: unknown }).requesterId ?? '');
+        const addressee = String((relation as { addresseeId?: unknown }).addresseeId ?? '');
+        if (requester === userId) return addressee;
+        if (addressee === userId) return requester;
+        return '';
+      })
+      .filter((id): id is string => Boolean(id)),
   );
 
   const normalizedItems = items.map((item) => {

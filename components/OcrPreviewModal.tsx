@@ -2,6 +2,8 @@
 /* eslint-disable @next/next/no-img-element */
 
 import { useEffect, useMemo, useState } from 'react';
+import { MagnifyingGlassPlusIcon } from '@heroicons/react/24/outline';
+import { ImageZoomModal } from '@/components/ImageZoomModal';
 
 export interface OcrPreviewItem {
   name: string;
@@ -76,6 +78,7 @@ export function OcrPreviewModal({
 }: OcrPreviewModalProps) {
   const [checked, setChecked] = useState<boolean[]>([]);
   const [editableItems, setEditableItems] = useState<OcrPreviewItem[]>([]);
+  const [isImageZoomOpen, setIsImageZoomOpen] = useState(false);
 
   useEffect(() => {
     if (!isOpen) return;
@@ -179,6 +182,17 @@ export function OcrPreviewModal({
           {/* Image Preview */}
           {imagePreview ? (
             <div className="overflow-hidden rounded-lg border border-gray-300 bg-gray-50">
+              <div className="flex justify-end border-b border-gray-200 bg-white px-3 py-2">
+                <button
+                  type="button"
+                  onClick={() => setIsImageZoomOpen(true)}
+                  title="ซูมดูรูป"
+                  aria-label="ซูมดูรูป"
+                  className="inline-flex h-9 w-9 items-center justify-center rounded-lg border border-gray-300 text-gray-700 transition hover:bg-gray-50"
+                >
+                  <MagnifyingGlassPlusIcon className="h-5 w-5" />
+                </button>
+              </div>
               <img
                 src={imagePreview}
                 alt="Receipt preview"
@@ -407,6 +421,13 @@ export function OcrPreviewModal({
           </button>
         </div>
       </div>
+
+      <ImageZoomModal
+        isOpen={isImageZoomOpen}
+        imageUrl={imagePreview}
+        title={fileName || 'รูปบิล OCR'}
+        onClose={() => setIsImageZoomOpen(false)}
+      />
     </div>
   );
 }

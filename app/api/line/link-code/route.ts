@@ -5,6 +5,7 @@ import { getServerSession, Session } from "next-auth";
 import { authOptions } from "@/lib/authOptions";
 import { connectMongoDB } from "@/lib/mongodb";
 import LineLinkCode from "@/models/lineLinkCode";
+import User from "@/models/user";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -33,6 +34,14 @@ export async function POST() {
   if (!userId) return NextResponse.json({ ok: false, message: "Unauthorized" }, { status: 401 });
 
   await connectMongoDB();
+
+  const exists = await User.exists({ _id: userId });
+  if (!exists) {
+    return NextResponse.json(
+      { ok: false, message: "LINE link is available for registered users only" },
+      { status: 403 },
+    );
+  }
 
   // ให้เหลือโค้ด active ได้แค่ 1 ชุดต่อ user
   await LineLinkCode.deleteMany({ userId, usedAt: null });

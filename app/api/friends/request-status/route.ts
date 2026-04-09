@@ -1,14 +1,15 @@
+import mongoose from "mongoose";
 import { NextRequest, NextResponse } from "next/server";
 import { getServerSession, DefaultUser } from "next-auth";
+
 import { authOptions } from "@/lib/authOptions";
-import User from "@/models/user";
 import { connectMongoDB } from "@/lib/mongodb";
+import FriendRelation, { buildPairKey } from "@/models/friendRelation";
 
 interface SessionUserWithId extends DefaultUser {
   id: string;
 }
 
-// ✅ GET /api/friends/request-status?userId={userId} - ตรวจสอบสถานะการส่งคำขอ
 export async function GET(req: NextRequest) {
   try {
     const session = (await getServerSession(authOptions)) as {
@@ -16,43 +17,32 @@ export async function GET(req: NextRequest) {
     } | null;
 
     if (!session?.user?.id) {
-      return NextResponse.json(
-        { error: "ต้องเข้าสู่ระบบก่อน" },
-        { status: 401 }
-      );
+      return NextResponse.json({ error: "ต้องเข้าสู่ระบบก่อน" }, { status: 401 });
     }
 
-    const targetUserId = req.nextUrl.searchParams.get("userId");
-
+    const targetUserId = req.nextUrl.searchParams.get("userId")?.trim() ?? "";
     if (!targetUserId) {
-      return NextResponse.json(
-        { error: "ต้องระบุ userId" },
-        { status: 400 }
-      );
+      return NextResponse.json({ error: "ต้องระบุ userId" }, { status: 400 });
+    }
+
+    if (!mongoose.Types.ObjectId.isValid(session.user.id) || !mongoose.Types.ObjectId.isValid(targetUserId)) {
+      return NextResponse.json({ error: "รหัสผู้ใช้ไม่ถูกต้อง" }, { status: 400 });
     }
 
     await connectMongoDB();
 
-    const currentUser = await User.findById(session.user.id).lean();
+    const relation = await FriendRelation.findOne({
+      pairKey: buildPairKey(session.user.id, targetUserId),
+    })
+      .select("status requesterId")
+      .lean();
 
-    if (!currentUser) {
-      return NextResponse.json(
-        { error: "ไม่พบผู้ใช้งาน" },
-        { status: 404 }
-      );
-    }
+    const requesterId = relation ? String((relation as { requesterId: unknown }).requesterId) : "";
+    const statusRaw = relation ? String((relation as { status: unknown }).status) : "";
 
-    const isFriend = currentUser.friends?.some(
-      (id) => String(id) === targetUserId
-    ) || false;
-
-    const hasOutgoing = currentUser.friendRequests?.outgoing?.some(
-      (id) => String(id) === targetUserId
-    ) || false;
-
-    const hasIncoming = currentUser.friendRequests?.incoming?.some(
-      (id) => String(id) === targetUserId
-    ) || false;
+    const isFriend = statusRaw === "accepted";
+    const hasOutgoing = statusRaw === "pending" && requesterId === session.user.id;
+    const hasIncoming = statusRaw === "pending" && requesterId === targetUserId;
 
     return NextResponse.json({
       isFriend,
@@ -61,10 +51,7 @@ export async function GET(req: NextRequest) {
       status: isFriend ? "friend" : hasOutgoing ? "request-sent" : hasIncoming ? "request-received" : "none",
     });
   } catch (error) {
-    console.error("❌ Error checking request status:", error);
-    return NextResponse.json(
-      { error: "Failed to check request status" },
-      { status: 500 }
-    );
+    console.error("Error checking request status:", error);
+    return NextResponse.json({ error: "Failed to check request status" }, { status: 500 });
   }
 }

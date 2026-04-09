@@ -1,6 +1,7 @@
 'use client';
 
-import { ReactNode, useEffect, useState, useMemo,Suspense, useCallback } from 'react';
+import { ReactNode, useEffect, useState, useMemo, Suspense, useCallback } from 'react';
+import Image from 'next/image';
 import { useSession } from 'next-auth/react';
 import {
   BellIcon,
@@ -11,6 +12,32 @@ import {
 } from '@heroicons/react/24/outline';
 import { ClipboardIcon, CheckIcon } from '@heroicons/react/24/outline';
 import { useSearchParams } from 'next/navigation';
+
+const THAI_BANK_OPTIONS = [
+  { id: 'kbank', name: 'กสิกรไทย', logoPath: '/banks/kbank.svg' },
+  { id: 'ktb', name: 'กรุงไทย', logoPath: '/banks/ktb.svg' },
+  { id: 'bbl', name: 'กรุงเทพ', logoPath: '/banks/bbl.svg' },
+  { id: 'scb', name: 'ไทยพาณิชย์', logoPath: '/banks/scb.svg' },
+  { id: 'bay', name: 'กรุงศรีอยุธยา', logoPath: '/banks/bay.svg' },
+  { id: 'ttb', name: 'ทหารไทยธนชาต (ttb)', logoPath: '/banks/ttb.svg' },
+  { id: 'gsb', name: 'ออมสิน', logoPath: '/banks/gsb.svg' },
+  { id: 'baac', name: 'ธ.ก.ส.', logoPath: '/banks/baac.svg' },
+  { id: 'uob', name: 'ยูโอบี (UOB)', logoPath: '/banks/uob.svg' },
+  { id: 'cimb', name: 'ซีไอเอ็มบี ไทย (CIMB Thai)', logoPath: '/banks/cimb.svg' },
+  { id: 'kkp', name: 'เกียรตินาคินภัทร (KKP)', logoPath: '/banks/kkp.svg' },
+  { id: 'lhb', name: 'แลนด์ แอนด์ เฮ้าส์ (LH Bank)', logoPath: '/banks/lhb.svg' },
+  { id: 'icbc', name: 'ไอซีบซี (ICBC Thai)', logoPath: '/banks/icbc.svg' },
+  { id: 'sc', name: 'สแตนดาร์ดชาร์เตอร์ด (ไทย)', logoPath: '/banks/sc.svg' },
+];
+
+const FALLBACK_LOGO_COLORS = [
+  'bg-blue-100 text-blue-700',
+  'bg-green-100 text-green-700',
+  'bg-purple-100 text-purple-700',
+  'bg-amber-100 text-amber-700',
+  'bg-pink-100 text-pink-700',
+  'bg-cyan-100 text-cyan-700',
+];
 
 type TabKey = 'profile' | 'password' | 'notifications';
 
@@ -297,6 +324,16 @@ function AccountInfoCard() {
   const [bank, setBank] = useState('');
   const [bankAccountNumber, setBankAccountNumber] = useState('');
   const [promptPayPhone, setPromptPayPhone] = useState('');
+  const [isBankDropdownOpen, setIsBankDropdownOpen] = useState(false);
+  const [brokenBankLogos, setBrokenBankLogos] = useState<Record<string, true>>({});
+
+  const markLogoBroken = (id: string) => setBrokenBankLogos((prev) => ({ ...prev, [id]: true }));
+  const getBankInitial = (bankName: string) => {
+    const latin = bankName.match(/[A-Za-z]+/);
+    if (latin) return latin[0].slice(0, 2).toUpperCase();
+    return bankName.slice(0, 2);
+  };
+  const selectedBankOption = THAI_BANK_OPTIONS.find((b) => b.name === bank);
 
   const inputClass =
     'w-full px-4 py-3 rounded-xl text-gray-900 border border-gray-400 bg-gray-50/50 transition-all duration-200 outline-none ' +
@@ -356,12 +393,12 @@ function AccountInfoCard() {
       return;
     }
 
-    if (!/^\d{10}$/.test(bankAccountNumber)) {
-      setMsg({ type: 'err', text: 'กรุณากรอกเลขบัญชี/เบอร์โทร 10 หลัก (ตัวเลขเท่านั้น)' });
+    if (!/^\d{10,12}$/.test(bankAccountNumber)) {
+      setMsg({ type: 'err', text: 'กรุณากรอกเลขบัญชี 10-12 หลัก (ตัวเลขเท่านั้น)' });
       return;
     }
 
-    if (!/^0\d{9}$/.test(promptPayPhone)) {
+    if (promptPayPhone && !/^0\d{9}$/.test(promptPayPhone)) {
       setMsg({ type: 'err', text: 'กรุณากรอกเบอร์พร้อมเพย์ 10 หลัก (ตัวเลขเท่านั้น)' });
       return;
     }
@@ -409,38 +446,112 @@ function AccountInfoCard() {
 
           <div className="space-y-2">
             <label className="text-sm font-semibold text-gray-700 ml-1">ธนาคาร</label>
-            <select className={selectClass} value={bank} onChange={(e) => setBank(e.target.value)}>
-              <option value="" disabled>
-                เลือกธนาคารของคุณ
-              </option>
-              <option value="กสิกรไทย">กสิกรไทย</option>
-              <option value="กรุงไทย">กรุงไทย</option>
-              <option value="กรุงเทพ">กรุงเทพ</option>
-              <option value="ไทยพาณิชย์">ไทยพาณิชย์</option>
-              <option value="พร้อมเพย์">พร้อมเพย์</option>
-            </select>
+            <div className="relative">
+              <button
+                type="button"
+                onClick={() => setIsBankDropdownOpen((o) => !o)}
+                className={`${selectClass} flex items-center gap-3 text-left`}
+              >
+                {selectedBankOption ? (
+                  <>
+                    <span className="inline-flex h-7 w-7 shrink-0 items-center justify-center overflow-hidden rounded-full">
+                      {!brokenBankLogos[selectedBankOption.id] ? (
+                        <Image
+                          src={selectedBankOption.logoPath}
+                          alt={selectedBankOption.name}
+                          width={28}
+                          height={28}
+                          className="object-contain"
+                          onError={() => markLogoBroken(selectedBankOption.id)}
+                        />
+                      ) : (
+                        <span
+                          className={`inline-flex h-7 w-7 items-center justify-center rounded-full text-[10px] font-bold ${
+                            FALLBACK_LOGO_COLORS[THAI_BANK_OPTIONS.findIndex((b) => b.id === selectedBankOption.id) % FALLBACK_LOGO_COLORS.length]
+                          }`}
+                        >
+                          {getBankInitial(selectedBankOption.name)}
+                        </span>
+                      )}
+                    </span>
+                    <span className="flex-1 truncate">{selectedBankOption.name}</span>
+                  </>
+                ) : (
+                  <span className="text-gray-400">เลือกธนาคารของคุณ</span>
+                )}
+                <svg className="ml-auto h-4 w-4 shrink-0 text-gray-400" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor">
+                  <path fillRule="evenodd" d="M5.22 8.22a.75.75 0 011.06 0L10 11.94l3.72-3.72a.75.75 0 111.06 1.06l-4.25 4.25a.75.75 0 01-1.06 0L5.22 9.28a.75.75 0 010-1.06z" clipRule="evenodd" />
+                </svg>
+              </button>
+
+              {isBankDropdownOpen && (
+                <ul
+                  role="listbox"
+                  className="absolute z-50 mt-1 w-full rounded-xl border border-gray-200 bg-white shadow-lg max-h-60 overflow-y-auto"
+                >
+                  {THAI_BANK_OPTIONS.map((item, idx) => {
+                    const isBroken = brokenBankLogos[item.id];
+                    const fallbackClass = FALLBACK_LOGO_COLORS[idx % FALLBACK_LOGO_COLORS.length];
+                    return (
+                      <li
+                        key={item.id}
+                        role="option"
+                        aria-selected={bank === item.name}
+                        onClick={() => { setBank(item.name); setIsBankDropdownOpen(false); }}
+                        className={`flex items-center gap-3 px-4 py-2.5 cursor-pointer hover:bg-orange-50 transition ${
+                          bank === item.name ? 'bg-orange-50 font-semibold' : ''
+                        }`}
+                      >
+                        <span className="inline-flex h-7 w-7 shrink-0 items-center justify-center overflow-hidden rounded-full">
+                          {!isBroken ? (
+                            <Image
+                              src={item.logoPath}
+                              alt={item.name}
+                              width={28}
+                              height={28}
+                              className="object-contain"
+                              onError={() => markLogoBroken(item.id)}
+                            />
+                          ) : (
+                            <span className={`inline-flex h-7 w-7 items-center justify-center rounded-full text-[10px] font-bold ${fallbackClass}`}>
+                              {getBankInitial(item.name)}
+                            </span>
+                          )}
+                        </span>
+                        <span className="text-sm text-gray-900">{item.name}</span>
+                        {bank === item.name && (
+                          <svg className="ml-auto h-4 w-4 text-[#fb8c00]" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor">
+                            <path fillRule="evenodd" d="M16.704 4.153a.75.75 0 01.143 1.052l-8 10.5a.75.75 0 01-1.127.075l-4.5-4.5a.75.75 0 011.06-1.06l3.894 3.893 7.48-9.817a.75.75 0 011.05-.143z" clipRule="evenodd" />
+                          </svg>
+                        )}
+                      </li>
+                    );
+                  })}
+                </ul>
+              )}
+            </div>
           </div>
 
           <div className="space-y-2">
-            <label className="text-sm font-semibold text-gray-700 ml-1">เลขบัญชี / เบอร์โทร (10 หลัก)</label>
+            <label className="text-sm font-semibold text-gray-700 ml-1">เลขบัญชี (10-12 หลัก)</label>
             <input
               className={inputClass}
               value={bankAccountNumber}
-              maxLength={10}
+              maxLength={12}
               inputMode="numeric"
-              onChange={(e) => setBankAccountNumber(e.target.value)}
-              placeholder="เช่น 0123456789"
+              onChange={(e) => setBankAccountNumber(e.target.value.replace(/\D/g, '').slice(0, 12))}
+              placeholder="เช่น 012345678901"
             />
           </div>
 
           <div className="space-y-2">
-            <label className="text-sm font-semibold text-gray-700 ml-1">เบอร์พร้อมเพย์ (10 หลัก)</label>
+            <label className="text-sm font-semibold text-gray-700 ml-1">เบอร์พร้อมเพย์ (10 หลัก, ไม่บังคับ)</label>
             <input
               className={inputClass}
               value={promptPayPhone}
               maxLength={10}
               inputMode="numeric"
-              onChange={(e) => setPromptPayPhone(e.target.value)}
+              onChange={(e) => setPromptPayPhone(e.target.value.replace(/\D/g, '').slice(0, 10))}
               placeholder="เช่น 0123456789"
             />
           </div>

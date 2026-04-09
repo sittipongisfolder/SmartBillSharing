@@ -1,10 +1,11 @@
 'use client';
 
-import { useSearchParams } from 'next/navigation';
 import { Suspense, useEffect, useMemo, useRef, useState, type ChangeEvent } from 'react';
 import { CheckCircleIcon } from '@heroicons/react/24/solid';
+import { MagnifyingGlassPlusIcon } from '@heroicons/react/24/outline';
 import { useSession } from 'next-auth/react';
 import { OcrPreviewModal, type OcrPreviewAcceptPayload } from '@/components/OcrPreviewModal';
+import { ImageZoomModal } from '@/components/ImageZoomModal';
 import { useOcrPreview } from '@/lib/useOcrPreview';
 import { AddParticipantDropdown } from '@/components/AddParticipantDropdown';
 import Image from 'next/image';
@@ -240,9 +241,7 @@ async function compressImage(
 }
 
 function CreatePercentPageInner() {
-  const searchParams = useSearchParams();
-  const splitTypeRaw = searchParams.get('type');
-  const splitType = (splitTypeRaw as SplitType) || 'percent';
+  const splitType = 'percentage' as SplitType;
   const splitTypeLabel = 'หารตามเปอร์เซ็นต์';
 
   const [title, setTitle] = useState('');
@@ -251,7 +250,6 @@ function CreatePercentPageInner() {
   const [participants, setParticipants] = useState<Participant[]>([
     { localId: makeLocalId(), kind: 'user', userId: '', name: '', percent: '', amount: 0, pctMode: 'percent' },
   ]);
-  const [sharePerPerson, setSharePerPerson] = useState(0);
   const [description, setDescription] = useState('');
 
   const { data: session } = useSession();
@@ -270,6 +268,7 @@ function CreatePercentPageInner() {
   const ocrPreview = useOcrPreview();
   const [ocrImageFile, setOcrImageFile] = useState<File | null>(null);
   const [selectedImagePreview, setSelectedImagePreview] = useState<string | null>(null);
+  const [isSelectedImageZoomOpen, setIsSelectedImageZoomOpen] = useState(false);
 
   const [draftBillId, setDraftBillId] = useState('');
   const [inviteLinkByLocalId, setInviteLinkByLocalId] = useState<Record<string, string>>({});
@@ -316,7 +315,6 @@ function CreatePercentPageInner() {
     () => participants.filter(isSelectableParticipant),
     [participants]
   );
-  const selectedCount = selectedParticipants.length;
 
   // โหลดรายชื่อผู้ใช้
   useEffect(() => {
@@ -660,8 +658,8 @@ function CreatePercentPageInner() {
     );
     setSelectedFileName('');
     setSelectedImagePreview(null);
+    setIsSelectedImageZoomOpen(false);
     setTotalPrice('');
-    setSharePerPerson(0);
     setUploading(false);
     setSubmitting(false);
 
@@ -720,25 +718,6 @@ function CreatePercentPageInner() {
     setItemList(updated);
     setTotalPrice(totalAmount);
   };
-
-  // equal
-  useEffect(() => {
-    if (splitType !== 'equal') {
-      setSharePerPerson(0);
-      return;
-    }
-
-    const t = typeof totalPrice === 'number' ? money(totalPrice) : 0;
-
-    if (t > 0 && selectedCount > 0) {
-      const share = money(t / selectedCount);
-      setSharePerPerson(share);
-      setParticipants((prev) => prev.map((p) => (isSelectableParticipant(p) ? { ...p, amount: share } : { ...p, amount: 0 })));
-    } else {
-      setSharePerPerson(0);
-      setParticipants((prev) => prev.map((p) => ({ ...p, amount: 0 })));
-    }
-  }, [splitType, totalPrice, selectedCount]);
 
   // =========================
   // ✅ PERCENT / AMOUNT (นิ่ง ไม่บัค)
@@ -987,11 +966,6 @@ function CreatePercentPageInner() {
     else setTotalPrice(money(Number(normalized)));
   };
 
-  const personalSum = useMemo(() => {
-    if (splitType !== 'personal') return 0;
-    return money(selectedParticipants.reduce((sum, p) => sum + money(toNumber(p.amount, 0)), 0));
-  }, [splitType, selectedParticipants]);
-
   const summary = useMemo(() => {
     const total = typeof totalPrice === 'number' && totalPrice > 0 ? money(totalPrice) : 0;
 
@@ -1040,9 +1014,8 @@ function CreatePercentPageInner() {
   }, [totalPrice, selectedParticipants]);
 
   const totalPercent = useMemo(() => {
-    if (splitType !== 'percentage') return 0;
     return round2(summary.rows.reduce((s, r) => s + r.percent, 0));
-  }, [splitType, summary.rows]);
+  }, [summary.rows]);
 
   const buildDraftPayload = () => {
     const cleanedItems = itemList
@@ -1408,101 +1381,56 @@ function CreatePercentPageInner() {
         percent?: number | '';
         amount: number;
       }> = [];
+      if (!(effectiveTotal > 0)) return alert('กรุณากรอก Total Amount ให้มากกว่า 0 ก่อน');
 
-      if (splitType === 'personal') {
-        const hasInvalid = cleanedParticipantsBase.some((p) => !(money(toNumber(p.amount, 0)) > 0));
-        if (hasInvalid) return alert('โหมดของใครของมัน: กรุณาใส่ยอดเงินของแต่ละคนให้มากกว่า 0');
+      const temp = cleanedParticipantsBase.map((p) => {
+        const mode = p.pctMode;
 
-        const sumAmt = money(cleanedParticipantsBase.reduce((s, p) => s + money(toNumber(p.amount, 0)), 0));
-        const diff = money(effectiveTotal - sumAmt);
-        if (Math.abs(diff) > 0.01) {
-          return alert(
-            `ยอดรวมของผู้เข้าร่วม (${sumAmt.toFixed(2)}) ต้องเท่ากับ Total Amount (${effectiveTotal.toFixed(2)})\nต่างกัน ${diff.toFixed(2)}`
-          );
+        if (mode === 'amount') {
+          const amt = money(toNumber(p.amount, 0));
+          if (!(amt > 0)) return { participantId: p.participantId, kind: p.kind, userId: p.userId, guestId: p.guestId, name: p.name, percent: NaN, amount: 0, mode };
+          const percent = round2((amt / effectiveTotal) * 100);
+          return { participantId: p.participantId, kind: p.kind, userId: p.userId, guestId: p.guestId, name: p.name, percent, amount: amt, mode };
         }
 
-        cleanedParticipants = cleanedParticipantsBase.map((p) => ({
-          participantId: p.participantId,
-          kind: p.kind,
-          userId: p.userId,
-          guestId: p.guestId,
-          name: p.name,
-          percent: '',
-          amount: money(toNumber(p.amount, 0)),
-        }));
-      } else if (splitType === 'percentage') {
-        if (!(effectiveTotal > 0)) return alert('กรุณากรอก Total Amount ให้มากกว่า 0 ก่อน');
+        const pctNum = p.percent === '' || p.percent === undefined ? NaN : Number(p.percent);
+        if (!Number.isFinite(pctNum)) return { participantId: p.participantId, kind: p.kind, userId: p.userId, guestId: p.guestId, name: p.name, percent: NaN, amount: 0, mode };
 
-        const temp = cleanedParticipantsBase.map((p) => {
-          const mode = p.pctMode;
+        const pct = round2(Math.max(0, Math.min(100, pctNum)));
+        const amt = money((effectiveTotal * pct) / 100);
+        return { participantId: p.participantId, kind: p.kind, userId: p.userId, guestId: p.guestId, name: p.name, percent: pct, amount: amt, mode };
+      });
 
-          if (mode === 'amount') {
-            const amt = money(toNumber(p.amount, 0));
-            if (!(amt > 0)) return { participantId: p.participantId, kind: p.kind, userId: p.userId, guestId: p.guestId, name: p.name, percent: NaN, amount: 0, mode };
-            const percent = round2((amt / effectiveTotal) * 100);
-            return { participantId: p.participantId, kind: p.kind, userId: p.userId, guestId: p.guestId, name: p.name, percent, amount: amt, mode };
+      const hasMissing = temp.some((p) => !Number.isFinite(p.percent));
+      if (hasMissing) return alert('โหมด %: กรุณาใส่ "เปอร์เซ็นต์" หรือ "จำนวนเงิน" ให้ครบทุกคนที่เลือก');
+
+      const sumAmt0 = money(temp.reduce((s, p) => s + p.amount, 0));
+      const diff0 = money(effectiveTotal - sumAmt0);
+
+      // ปรับเศษให้คนท้ายสุดที่ไม่ใช่ amount-fix ก่อน
+      if (diff0 !== 0 && temp.length > 0) {
+        let idx = -1;
+        for (let i = temp.length - 1; i >= 0; i--) {
+          if (temp[i].mode !== 'amount') {
+            idx = i;
+            break;
           }
-
-          const pctNum = p.percent === '' || p.percent === undefined ? NaN : Number(p.percent);
-          if (!Number.isFinite(pctNum)) return { participantId: p.participantId, kind: p.kind, userId: p.userId, guestId: p.guestId, name: p.name, percent: NaN, amount: 0, mode };
-
-          const pct = round2(Math.max(0, Math.min(100, pctNum)));
-          const amt = money((effectiveTotal * pct) / 100);
-          return { participantId: p.participantId, kind: p.kind, userId: p.userId, guestId: p.guestId, name: p.name, percent: pct, amount: amt, mode };
-        });
-
-        const hasMissing = temp.some((p) => !Number.isFinite(p.percent));
-        if (hasMissing) return alert('โหมด %: กรุณาใส่ "เปอร์เซ็นต์" หรือ "จำนวนเงิน" ให้ครบทุกคนที่เลือก');
-
-        const sumAmt0 = money(temp.reduce((s, p) => s + p.amount, 0));
-        const diff0 = money(effectiveTotal - sumAmt0);
-
-        // ปรับเศษให้คนท้ายสุดที่ไม่ใช่ amount-fix ก่อน
-        if (diff0 !== 0 && temp.length > 0) {
-          let idx = -1;
-          for (let i = temp.length - 1; i >= 0; i--) {
-            if (temp[i].mode !== 'amount') {
-              idx = i;
-              break;
-            }
-          }
-          if (idx === -1) idx = temp.length - 1;
-
-          temp[idx].amount = money(temp[idx].amount + diff0);
-          temp[idx].percent = round2((temp[idx].amount / effectiveTotal) * 100);
         }
+        if (idx === -1) idx = temp.length - 1;
 
-        cleanedParticipants = temp.map((p) => ({
-          participantId: p.participantId,
-          kind: p.kind,
-          userId: p.userId,
-          guestId: p.guestId,
-          name: p.name,
-          amount: money(p.amount),
-          percent: round2((money(p.amount) / effectiveTotal) * 100),
-        }));
-      } else {
-        const count = cleanedParticipantsBase.length;
-        const share = count > 0 ? money(effectiveTotal / count) : 0;
-
-        cleanedParticipants = cleanedParticipantsBase.map((p) => ({
-          participantId: p.participantId,
-          kind: p.kind,
-          userId: p.userId,
-          guestId: p.guestId,
-          name: p.name,
-          percent: '',
-          amount: share,
-        }));
-
-        const sumAmt = money(cleanedParticipants.reduce((s, p) => s + p.amount, 0));
-        const diff = money(effectiveTotal - sumAmt);
-        if (diff !== 0 && cleanedParticipants.length > 0) {
-          cleanedParticipants[cleanedParticipants.length - 1].amount = money(
-            cleanedParticipants[cleanedParticipants.length - 1].amount + diff
-          );
-        }
+        temp[idx].amount = money(temp[idx].amount + diff0);
+        temp[idx].percent = round2((temp[idx].amount / effectiveTotal) * 100);
       }
+
+      cleanedParticipants = temp.map((p) => ({
+        participantId: p.participantId,
+        kind: p.kind,
+        userId: p.userId,
+        guestId: p.guestId,
+        name: p.name,
+        amount: money(p.amount),
+        percent: round2((money(p.amount) / effectiveTotal) * 100),
+      }));
 
       const endpoint = draftBillId ? `/api/bills/${draftBillId}/publish` : '/api/bills';
       const method = draftBillId ? 'PATCH' : 'POST';
@@ -1552,6 +1480,24 @@ function CreatePercentPageInner() {
         alert(draftBillId ? 'เปิดบิลสำเร็จ!' : 'สร้างบิลสำเร็จ!');
         localStorage.removeItem('ocrReceiptImageUrl');
         localStorage.removeItem('ocrReceiptImagePublicId');
+
+        const billIdFromResponse = (() => {
+          if (!data || typeof data !== 'object') return '';
+          const result = data as {
+            bill?: { _id?: string };
+            billId?: string;
+            _id?: string;
+          };
+
+          return String(result.bill?._id ?? result.billId ?? result._id ?? '').trim();
+        })();
+
+        const targetBillId = billIdFromResponse || draftBillId;
+        if (targetBillId) {
+          window.location.assign(`/history?billId=${encodeURIComponent(targetBillId)}`);
+          return;
+        }
+
         resetForm();
       } else {
         console.log('CREATE BILL ERROR:', res.status, data);
@@ -1595,6 +1541,16 @@ function CreatePercentPageInner() {
                     unoptimized
                     className="object-contain"
                   />
+
+                  <button
+                    type="button"
+                    onClick={() => setIsSelectedImageZoomOpen(true)}
+                    title="ซูมดูรูป"
+                    aria-label="ซูมดูรูป"
+                    className="absolute right-2 top-2 inline-flex h-9 w-9 items-center justify-center rounded-lg border border-gray-300 bg-white/95 text-gray-700 shadow-sm transition hover:bg-white"
+                  >
+                    <MagnifyingGlassPlusIcon className="h-5 w-5" />
+                  </button>
                 </div>
                 <p className="text-xs text-gray-500">
                   ไฟล์ที่เลือก: <span className="font-medium">{selectedFileName}</span>
@@ -1855,65 +1811,37 @@ function CreatePercentPageInner() {
                       </div>
                     </div>
 
-                    {/* Percent / Amount fields */}
-                    {splitType === 'percentage' && (
-                      <div className="mt-2 pl-9">
-                        <div className="grid grid-cols-2 gap-2">
-                          <div className="min-w-0">
-                            <p className="mb-1 text-[11px] font-medium text-slate-600">เปอร์เซ็นต์ (%)</p>
-                          <input
-                            type="number"
-                            min={0}
-                            max={100}
-                            step={0.01}
-                            inputMode="decimal"
+                    <div className="mt-3 pl-9 pr-2">
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 sm:gap-3">
+                        <div className="min-w-0">
+                          <p className="mb-1 text-xs sm:text-xs font-semibold text-slate-700">เปอร์เซ็นต์ (%)</p>
+                          <select
                             disabled={!canEditSplitValue}
-                            className="w-full px-2 py-1.5 text-sm border border-slate-200 rounded-lg bg-white text-gray-800 focus:outline-none focus:ring-2 focus:ring-[#fb8c00] disabled:bg-gray-100"
-                            placeholder="0.00"
+                            className="w-full px-2 sm:px-3 py-1.5 sm:py-2 text-xs sm:text-sm border border-slate-300 rounded-lg bg-white text-gray-800 font-medium focus:outline-none focus:ring-2 focus:ring-[#fb8c00] focus:border-[#fb8c00] disabled:bg-gray-100 disabled:text-gray-500 cursor-pointer disabled:cursor-not-allowed transition"
                             value={participant.percent === '' || participant.percent === undefined ? '' : participant.percent}
                             onChange={(e) => setPercentAt(index, e.target.value)}
-                          />
-                          </div>
-                          <div className="min-w-0">
-                            <p className="mb-1 text-[11px] font-medium text-slate-600">จำนวนเงิน (บาท)</p>
+                          >
+                            <option value="">-- เลือก % --</option>
+                            {[10, 20, 30, 40, 50, 60, 70, 80, 90, 100].map((v) => (
+                              <option key={v} value={v}>{v}%</option>
+                            ))}
+                          </select>
+                        </div>
+                        <div className="min-w-0">
+                          <p className="mb-1 text-xs sm:text-xs font-semibold text-slate-700">จำนวนเงิน (บาท)</p>
                           <input
                             type="text"
                             inputMode="decimal"
                             disabled={!canEditSplitValue}
-                            className="w-full px-2 py-1.5 text-sm border border-slate-200 rounded-lg bg-white text-gray-800 focus:outline-none focus:ring-2 focus:ring-[#fb8c00] disabled:bg-gray-100"
+                            className="w-full px-2 sm:px-3 py-1.5 sm:py-2 text-xs sm:text-sm border border-slate-300 rounded-lg bg-white text-gray-800 focus:outline-none focus:ring-2 focus:ring-[#fb8c00] focus:border-[#fb8c00] disabled:bg-gray-100 disabled:text-gray-500 transition"
                             placeholder="0.00"
-                            value={participant.amount === '' ? '' : money(Number(participant.amount)).toFixed(2)}
+                            value={participant.amount === '' ? '' : String(participant.amount)}
+                            onFocus={(e) => e.currentTarget.select()}
                             onChange={(e) => setAmountAt(index, e.target.value)}
                           />
-                          </div>
                         </div>
                       </div>
-                    )}
-
-                    {splitType === 'personal' && (
-                      <div className="mt-2 pl-9">
-                        <div className="w-full max-w-[170px]">
-                          <p className="mb-1 text-[11px] font-medium text-slate-600">จำนวนเงิน (บาท)</p>
-                          <input
-                            type="text"
-                            inputMode="decimal"
-                            disabled={!canEditSplitValue}
-                            className="w-full px-2 py-1.5 text-sm border border-slate-200 rounded-lg bg-white text-gray-800 focus:outline-none focus:ring-2 focus:ring-[#fb8c00] disabled:bg-gray-100"
-                            placeholder="0.00"
-                            value={participant.amount === '' ? '' : money(Number(participant.amount)).toFixed(2)}
-                            onChange={(e) => {
-                              const normalized = normalizeMoneyInput(e.target.value);
-                              const amt = normalized === '' ? '' : toAmountValue(normalized);
-                              setParticipants((prev) =>
-                                prev.map((p): Participant =>
-                                  p.localId === participant.localId ? { ...p, amount: amt } : p
-                                )
-                              );
-                            }}
-                          />
-                        </div>
-                      </div>
-                    )}
+                    </div>
                   </div>
                 );
               })}
@@ -1990,26 +1918,9 @@ function CreatePercentPageInner() {
             <p className="text-lg text-[#4a4a4a]">รวมทั้งหมด</p>
             <p className="text-2xl font-semibold text-[#fb8c00]">{money(summary.total).toFixed(2)} ฿</p>
 
-            {splitType === 'equal' && (
-              <p className="text-xs text-gray-500 mt-1">
-                หารเท่ากัน: {selectedCount > 0 ? money(sharePerPerson).toFixed(2) : '0.00'} ฿/คน
-              </p>
-            )}
-
-            {splitType === 'percentage' && (
-              <p className={`text-xs mt-1 ${Math.abs(totalPercent - 100) > 0.01 ? 'text-red-500' : 'text-green-600'}`}>
-                รวมเปอร์เซ็นต์: {totalPercent}% {Math.abs(totalPercent - 100) > 0.01 ? '(ควรเป็น 100%)' : '✓'}
-              </p>
-            )}
-
-            {splitType === 'personal' && (
-              <p
-                className={`text-xs mt-1 ${summary.total > 0 && Math.abs(personalSum - summary.total) > 0.01 ? 'text-red-500' : 'text-gray-500'
-                  }`}
-              >
-                รวมที่กรอก: {money(personalSum).toFixed(2)} ฿
-              </p>
-            )}
+            <p className={`text-xs mt-1 ${Math.abs(totalPercent - 100) > 0.01 ? 'text-red-500' : 'text-green-600'}`}>
+              รวมเปอร์เซ็นต์: {totalPercent}% {Math.abs(totalPercent - 100) > 0.01 ? '(ควรเป็น 100%)' : '✓'}
+            </p>
           </div>
           <div className="mb-6">
             <div className="text-center mb-2">
@@ -2026,11 +1937,7 @@ function CreatePercentPageInner() {
                       <div className="text-[#4a4a4a] min-w-0">
                         {p.name} ({summary.total > 0 ? p.percent.toFixed(0) : '0'}%)
                         <div className="text-xs text-gray-500">
-                          {splitType === 'equal'
-                            ? `หารเท่ากัน: ${selectedCount > 0 ? money(sharePerPerson).toFixed(2) : '0.00'} ฿`
-                            : splitType === 'percentage'
-                              ? `ตั้งไว้: ${p.percentInput.toFixed(2)}%`
-                              : `ใส่เอง: ${money(p.amount).toFixed(2)} ฿`}
+                          {`ตั้งไว้: ${p.percentInput.toFixed(2)}%`}
                         </div>
                       </div>
 
@@ -2069,6 +1976,13 @@ function CreatePercentPageInner() {
         onAccept={onAcceptOcr}
         onReject={onRejectOcr}
         isLoading={ocrPreview.isLoading}
+      />
+
+      <ImageZoomModal
+        isOpen={isSelectedImageZoomOpen}
+        imageUrl={selectedImagePreview}
+        title={selectedFileName || 'รูปบิล'}
+        onClose={() => setIsSelectedImageZoomOpen(false)}
       />
     </div>
   );

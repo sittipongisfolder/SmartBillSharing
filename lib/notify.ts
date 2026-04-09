@@ -136,7 +136,24 @@ async function ensureSettings(userId: mongoose.Types.ObjectId) {
   const s = await NotificationSettings.findOne({ userId })
     .select('enabledTypes dailySummaryEnabled dailySummaryHour lastDailySummaryAt')
     .lean();
-  if (s) return s;
+  if (s) {
+    const enabled = Array.isArray(s.enabledTypes) ? s.enabledTypes : [];
+    const missing = DEFAULT_TYPES.filter((t) => !enabled.includes(t));
+
+    // Keep existing users in sync when new notification types are introduced.
+    if (missing.length > 0) {
+      await NotificationSettings.updateOne(
+        { userId },
+        { $addToSet: { enabledTypes: { $each: missing } } },
+      );
+
+      return NotificationSettings.findOne({ userId })
+        .select('enabledTypes dailySummaryEnabled dailySummaryHour lastDailySummaryAt')
+        .lean();
+    }
+
+    return s;
+  }
 
   await NotificationSettings.create({
     userId,

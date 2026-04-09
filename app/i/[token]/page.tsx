@@ -2,7 +2,7 @@ import { notFound, redirect } from 'next/navigation';
 import { connectMongoDB } from '@/lib/mongodb';
 import Invite from '@/models/invite';
 import Bill from '@/models/bill';
-import { generateToken, hashToken } from '@/lib/tokens';
+import { generateToken, getInviteIdFromPublicToken, hashToken } from '@/lib/tokens';
 import GuestAccessLink from '@/models/guestAccessLink';
 
 export const runtime = 'nodejs';
@@ -15,13 +15,19 @@ export default async function InviteJoinPage({
   const { token: rawToken } = await params;
 
   await connectMongoDB();
-  const tokenHash = hashToken(rawToken);
+  const inviteId = getInviteIdFromPublicToken(rawToken);
 
-  const invite = await Invite.findOne({
-    tokenHash,
-    revoked: false,
-    $or: [{ expiresAt: null }, { expiresAt: { $gt: new Date() } }],
-  }).lean();
+  const invite = inviteId
+    ? await Invite.findOne({
+        _id: inviteId,
+        revoked: false,
+        $or: [{ expiresAt: null }, { expiresAt: { $gt: new Date() } }],
+      }).lean()
+    : await Invite.findOne({
+        tokenHash: hashToken(rawToken),
+        revoked: false,
+        $or: [{ expiresAt: null }, { expiresAt: { $gt: new Date() } }],
+      }).lean();
 
   if (!invite) notFound();
 
@@ -46,6 +52,27 @@ export default async function InviteJoinPage({
     (participant?.kind === 'guest' && participant.guestId ? participant : null) ||
     guestFromInvite ||
     (bill.stage === 'active' && invite.usedCount > 0 && guests.length === 1 ? guests[0] : null);
+
+  if (resolvedGuest?.paymentStatus === 'paid') {
+    return (
+      <div className="min-h-screen bg-[#fbf7f1] p-6">
+        <header className="mx-auto mb-4 max-w-xl rounded-2xl border border-black/5 bg-white px-4 shadow-sm">
+          <div className="flex h-16 items-center justify-center sm:justify-start">
+            <div className="flex items-center gap-2">
+              <span className="inline-flex h-9 w-9 items-center justify-center rounded-lg bg-[#fb8c00]/10 text-[#fb8c00]">
+                <span className="text-lg">🍊</span>
+              </span>
+              <span className="font-semibold tracking-tight text-[#2f2f2f]">Smart Bill Sharing System</span>
+            </div>
+          </div>
+        </header>
+        <div className="mx-auto max-w-xl rounded-2xl bg-white p-6 shadow">
+          <h1 className="text-xl font-bold text-[#4a4a4a]">ลิงก์นี้สิ้นสุดการใช้งานแล้ว</h1>
+          <p className="mt-3 text-sm text-gray-600">Guest รายการนี้ชำระเงินเรียบร้อยแล้ว</p>
+        </div>
+      </div>
+    );
+  }
 
   if (resolvedGuest?.guestId) {
     const rawAccessToken = generateToken(32);

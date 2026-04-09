@@ -5,8 +5,7 @@ export interface IInvite extends mongoose.Document {
   participantId: mongoose.Types.ObjectId;
   guestId?: mongoose.Types.ObjectId;
   createdBy: mongoose.Types.ObjectId;
-  tokenHash: string;
-  tokenPlain?: string;
+  tokenHash?: string | null;
   revoked: boolean;
   expiresAt?: Date | null;
   maxUses?: number | null;
@@ -21,8 +20,7 @@ const inviteSchema = new Schema<IInvite>(
     participantId: { type: Schema.Types.ObjectId, required: true, index: true },
     guestId: { type: Schema.Types.ObjectId, ref: 'Guest', index: true, default: null },
     createdBy: { type: Schema.Types.ObjectId, ref: 'User', required: true, index: true },
-    tokenHash: { type: String, required: true, unique: true, index: true },
-    tokenPlain: { type: String, default: '' },
+    tokenHash: { type: String, default: null },
 
     revoked: { type: Boolean, default: false, index: true },
     expiresAt: { type: Date, default: null, index: true },
@@ -34,6 +32,13 @@ const inviteSchema = new Schema<IInvite>(
 );
 
 inviteSchema.index({ billId: 1, participantId: 1, revoked: 1, expiresAt: 1 });
+inviteSchema.index(
+  { tokenHash: 1 },
+  {
+    unique: true,
+    partialFilterExpression: { tokenHash: { $type: 'string' } },
+  },
+);
 
 const Invite: Model<IInvite> =
   mongoose.models.Invite || mongoose.model<IInvite>('Invite', inviteSchema);

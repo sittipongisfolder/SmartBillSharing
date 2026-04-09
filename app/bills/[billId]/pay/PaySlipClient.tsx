@@ -436,7 +436,20 @@ export default function PaySlipClient({ billId, forcedGuestAccessToken }: { bill
   }
 
   const [copied, setCopied] = useState(false);
+  const [copiedBankAccount, setCopiedBankAccount] = useState(false);
   const [guestSavedLink, setGuestSavedLink] = useState('');
+
+  async function handleCopyBankAccount() {
+    const acc = owner?.bankAccountNumber;
+    if (!acc) return;
+    try {
+      await navigator.clipboard.writeText(acc);
+      setCopiedBankAccount(true);
+      window.setTimeout(() => setCopiedBankAccount(false), 1500);
+    } catch {
+      setCopiedBankAccount(false);
+    }
+  }
 
   useEffect(() => {
     if (!isGuestMode || typeof window === 'undefined') {
@@ -529,7 +542,9 @@ export default function PaySlipClient({ billId, forcedGuestAccessToken }: { bill
             </div>
           ) : null}
 
-          <div className="text-lg font-bold text-gray-800 mb-4">ชำระไปยัง (PromptPay)</div>
+          <div className="text-lg font-bold text-gray-800 mb-4">
+            ชำระไปยัง {owner?.promptPayPhone ? '(PromptPay)' : '(บัญชีธนาคาร)'}
+          </div>
 
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
             {/* left info */}
@@ -622,10 +637,50 @@ export default function PaySlipClient({ billId, forcedGuestAccessToken }: { bill
                     * บันทึก QR แล้วไปโอนเงินใน App ธนาคาร จากนั้นกลับมาแนบสลิปที่ด้านล่าง
                   </p>
                 </>
-              ) : (
+              ) : owner?.promptPayPhone ? (
                 <div className="text-sm text-gray-400 text-center">
-                  ไม่มีข้อมูล PromptPay ของหัวบิล
-                  {qrError ? <div className="mt-2 text-xs text-red-500">{qrError}</div> : null}
+                  {qrError ? <div className="mt-2 text-xs text-red-500">{qrError}</div> : 'กำลังสร้าง QR...'}
+                </div>
+              ) : (
+                <div className="w-full space-y-4 text-center">
+                  <div className="rounded-2xl border-2 border-dashed border-orange-200 bg-orange-50 p-5">
+                    <div className="text-sm font-semibold text-orange-700 mb-1">เจ้าของบิลไม่มี PromptPay</div>
+                    <div className="text-xs text-gray-500 mb-4">กรุณาโอนเงินผ่านบัญชีธนาคารด้านล่าง</div>
+
+                    <div className="bg-white rounded-xl border border-orange-100 p-4 text-left space-y-2">
+                      <div>
+                        <span className="text-xs text-gray-400">ธนาคาร</span>
+                        <div className="font-bold text-gray-900 mt-0.5">{owner?.bank ?? '-'}</div>
+                      </div>
+                      <div>
+                        <span className="text-xs text-gray-400">เลขบัญชี</span>
+                        <div className="font-extrabold text-xl text-[#e65100] mt-0.5 tracking-widest">
+                          {owner?.bankAccountNumber ?? '-'}
+                        </div>
+                      </div>
+                      <div>
+                        <span className="text-xs text-gray-400">ชื่อบัญชี</span>
+                        <div className="font-bold text-gray-900 mt-0.5">{owner?.name ?? '-'}</div>
+                      </div>
+                    </div>
+
+                    <button
+                      type="button"
+                      onClick={handleCopyBankAccount}
+                      disabled={!owner?.bankAccountNumber}
+                      className="mt-4 inline-flex items-center gap-2 px-5 py-2.5 rounded-xl bg-[#fb8c00] hover:bg-[#e65100] text-white text-sm font-semibold transition active:scale-95 disabled:opacity-40 disabled:cursor-not-allowed"
+                    >
+                      <svg xmlns="http://www.w3.org/2000/svg" className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                        <rect x="9" y="9" width="13" height="13" rx="2" strokeLinecap="round" strokeLinejoin="round" />
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1" />
+                      </svg>
+                      {copiedBankAccount ? 'คัดลอกแล้ว ✓' : 'คัดลอกเลขบัญชี'}
+                    </button>
+                  </div>
+
+                  <p className="text-red-600 text-xs sm:text-sm font-medium">
+                    * โอนเงินแล้วกลับมาแนบสลิปที่ด้านล่าง
+                  </p>
                 </div>
               )}
             </div>

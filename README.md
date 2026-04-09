@@ -50,3 +50,9 @@ NEXTAUTH_URL=http://localhost:3000
 ```
 
 If SMTP is not configured, the app will log the reset link on the server for local development.
+
+## Guest And LINE Policy
+
+- Guests can only access bills through guest access links and can only perform guest payment actions.
+- Guests cannot link LINE accounts.
+- LINE linking, status checks, and unlink operations are supported only for registered users.

@@ -3,8 +3,10 @@
 import { useSearchParams } from 'next/navigation';
 import { Suspense, useEffect, useMemo, useRef, useState, type ChangeEvent } from 'react';
 import { CheckCircleIcon } from '@heroicons/react/24/solid';
+import { MagnifyingGlassPlusIcon } from '@heroicons/react/24/outline';
 import { useSession } from 'next-auth/react';
 import { OcrPreviewModal, type OcrPreviewAcceptPayload } from '@/components/OcrPreviewModal';
+import { ImageZoomModal } from '@/components/ImageZoomModal';
 import { useOcrPreview } from '@/lib/useOcrPreview';
 import { AddParticipantDropdown } from '@/components/AddParticipantDropdown';
 import Image from 'next/image';
@@ -273,6 +275,7 @@ function CreateBillPersonalPageInner() {
   const ocrPreview = useOcrPreview();
   const [ocrImageFile, setOcrImageFile] = useState<File | null>(null);
   const [selectedImagePreview, setSelectedImagePreview] = useState<string | null>(null);
+  const [isSelectedImageZoomOpen, setIsSelectedImageZoomOpen] = useState(false);
 
   const [draftBillId, setDraftBillId] = useState('');
   const [inviteLinkByLocalId, setInviteLinkByLocalId] = useState<Record<string, string>>({});
@@ -640,6 +643,7 @@ function CreateBillPersonalPageInner() {
     setDescription('');
     setSelectedFileName('');
     setSelectedImagePreview(null);
+    setIsSelectedImageZoomOpen(false);
     setUploading(false);
     setSubmitting(false);
     setIsAddParticipantOpen(false);
@@ -1314,6 +1318,24 @@ function CreateBillPersonalPageInner() {
         alert(draftBillId ? 'เปิดบิลสำเร็จ!' : 'สร้างบิลสำเร็จ!');
         localStorage.removeItem('ocrReceiptImageUrl');
         localStorage.removeItem('ocrReceiptImagePublicId');
+
+        const billIdFromResponse = (() => {
+          if (!data || typeof data !== 'object') return '';
+          const result = data as {
+            bill?: { _id?: string };
+            billId?: string;
+            _id?: string;
+          };
+
+          return String(result.bill?._id ?? result.billId ?? result._id ?? '').trim();
+        })();
+
+        const targetBillId = billIdFromResponse || draftBillId;
+        if (targetBillId) {
+          window.location.assign(`/history?billId=${encodeURIComponent(targetBillId)}`);
+          return;
+        }
+
         resetForm();
       } else {
         console.log('CREATE BILL ERROR:', res.status, data);
@@ -1358,6 +1380,16 @@ function CreateBillPersonalPageInner() {
                     unoptimized
                     className="object-contain"
                   />
+
+                  <button
+                    type="button"
+                    onClick={() => setIsSelectedImageZoomOpen(true)}
+                    title="ซูมดูรูป"
+                    aria-label="ซูมดูรูป"
+                    className="absolute right-2 top-2 inline-flex h-9 w-9 items-center justify-center rounded-lg border border-gray-300 bg-white/95 text-gray-700 shadow-sm transition hover:bg-white"
+                  >
+                    <MagnifyingGlassPlusIcon className="h-5 w-5" />
+                  </button>
                 </div>
                 <p className="text-xs text-gray-500">
                   ไฟล์ที่เลือก: <span className="font-medium">{selectedFileName}</span>
@@ -1876,6 +1908,13 @@ function CreateBillPersonalPageInner() {
         onAccept={onAcceptOcr}
         onReject={onRejectOcr}
         isLoading={ocrPreview.isLoading}
+      />
+
+      <ImageZoomModal
+        isOpen={isSelectedImageZoomOpen}
+        imageUrl={selectedImagePreview}
+        title={selectedFileName || 'รูปบิล'}
+        onClose={() => setIsSelectedImageZoomOpen(false)}
       />
     </div>
   );

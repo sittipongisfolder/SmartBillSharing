@@ -5,7 +5,7 @@ import { authOptions } from "@/lib/authOptions";
 import { connectMongoDB } from "@/lib/mongodb";
 import Bill from "@/models/bill";
 import Invite from "@/models/invite";
-import { generateToken, hashToken } from "@/lib/tokens";
+import { createInvitePublicToken, generateToken, hashToken } from "@/lib/tokens";
 import { isRecord } from "@/lib/typeGuards";
 import GuestAccessLink from "@/models/guestAccessLink";
 
@@ -32,6 +32,10 @@ function idToString(v: unknown): string {
     if (typeof fn === "function") return String(fn.call(v));
   }
   return "";
+}
+
+function isParticipantPaid(participant: { paymentStatus?: unknown } | undefined): boolean {
+  return participant?.paymentStatus === "paid";
 }
 
 export async function POST(req: Request, { params }: RouteContext) {
@@ -119,8 +123,6 @@ export async function POST(req: Request, { params }: RouteContext) {
     );
   }
 
-  const rawToken = generateToken(32);
-  const tokenHash = hashToken(rawToken);
   const expiresAt: Date | null = null;
 
   const existingInvite = (await Invite.findOne({
@@ -131,18 +133,16 @@ export async function POST(req: Request, { params }: RouteContext) {
     .sort({ createdAt: -1 })
     .lean()) as
     | {
-        tokenPlain?: string;
+        _id: unknown;
         expiresAt?: Date | null;
         maxUses?: number | null;
       }
     | null;
 
-  if (
-    existingInvite?.tokenPlain &&
-    isInviteNotExpired(existingInvite.expiresAt)
-  ) {
+  if (existingInvite && isInviteNotExpired(existingInvite.expiresAt)) {
+    const inviteToken = createInvitePublicToken(idToString(existingInvite._id));
     return NextResponse.json({
-      invitePath: `/i/${existingInvite.tokenPlain}`,
+      invitePath: `/i/${inviteToken}`,
       expiresAt: existingInvite.expiresAt ?? null,
       maxUses: existingInvite.maxUses ?? maxUses,
       participantId: idToString(participant._id),
@@ -162,20 +162,20 @@ export async function POST(req: Request, { params }: RouteContext) {
     },
   );
 
-  await Invite.create({
+  const createdInvite = await Invite.create({
     billId: bill._id,
     participantId: participant._id,
     createdBy: userId,
-    tokenHash,
-    tokenPlain: rawToken,
     expiresAt,
     maxUses,
     usedCount: 0,
     revoked: false,
   });
 
+  const inviteToken = createInvitePublicToken(idToString(createdInvite._id));
+
   return NextResponse.json({
-    invitePath: `/i/${rawToken}`,
+    invitePath: `/i/${inviteToken}`,
     expiresAt,
     maxUses,
     participantId: idToString(participant._id),
@@ -227,6 +227,13 @@ export async function GET(req: Request, { params }: RouteContext) {
     );
   }
 
+  if (isParticipantPaid(participant as { paymentStatus?: unknown })) {
+    return NextResponse.json(
+      { error: "participant นี้ชำระเงินแล้ว ลิงก์เชิญจึงไม่สามารถใช้งานต่อได้" },
+      { status: 409 },
+    );
+  }
+
   const invite = (await Invite.findOne({
     billId: bill._id,
     participantId: participant._id,
@@ -235,7 +242,7 @@ export async function GET(req: Request, { params }: RouteContext) {
     .sort({ createdAt: -1 })
     .lean()) as
     | {
-        tokenPlain?: string;
+        _id: unknown;
         expiresAt?: Date | null;
         maxUses?: number | null;
         guestId?: unknown;
@@ -253,7 +260,7 @@ export async function GET(req: Request, { params }: RouteContext) {
         .sort({ createdAt: -1 })
         .lean()) as
         | {
-            tokenPlain?: string;
+            _id: unknown;
             expiresAt?: Date | null;
             maxUses?: number | null;
             guestId?: unknown;
@@ -263,12 +270,10 @@ export async function GET(req: Request, { params }: RouteContext) {
 
   const effectiveInvite = invite ?? inviteByGuest;
 
-  if (
-    effectiveInvite?.tokenPlain &&
-    isInviteNotExpired(effectiveInvite.expiresAt)
-  ) {
+  if (effectiveInvite && isInviteNotExpired(effectiveInvite.expiresAt)) {
+    const inviteToken = createInvitePublicToken(idToString(effectiveInvite._id));
     return NextResponse.json({
-      invitePath: `/i/${effectiveInvite.tokenPlain}`,
+      invitePath: `/i/${inviteToken}`,
       expiresAt: effectiveInvite.expiresAt ?? null,
       maxUses: effectiveInvite.maxUses ?? null,
       participantId,
