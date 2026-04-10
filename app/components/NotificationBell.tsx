@@ -111,17 +111,23 @@ export default function NotificationBell() {
   }, [open]);
 
   const markAllRead = async () => {
-    await fetch('/api/notifications/mark-read', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ all: true }),
-    });
-    await fetchList(tab);
+    try {
+      await fetch('/api/notifications/mark-read', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ all: true }),
+      });
+    } finally {
+      await fetchList(tab);
+    }
   };
 
   const clearAll = async () => {
-    await fetch('/api/notifications/clear', { method: 'POST' });
-    await fetchList(tab);
+    try {
+      await fetch('/api/notifications/clear', { method: 'POST' });
+    } finally {
+      await fetchList(tab);
+    }
   };
 
   const markOneRead = async (id: string) => {
@@ -238,7 +244,7 @@ export default function NotificationBell() {
               <button
                 type="button"
                 onClick={markAllRead}
-                className="h-9 px-3 rounded-xl text-sm font-semibold text-gray-700 hover:bg-gray-50 flex items-center gap-2"
+                className="pointer-events-auto h-9 px-3 rounded-xl text-sm font-semibold text-gray-700 hover:bg-gray-50 flex items-center gap-2"
               >
                 <CheckIcon className="h-4 w-4" />
                 อ่านแล้ว
@@ -246,7 +252,7 @@ export default function NotificationBell() {
               <button
                 type="button"
                 onClick={clearAll}
-                className="h-9 px-3 rounded-xl text-sm font-semibold text-gray-700 hover:bg-red-500 flex items-center gap-2"
+                className="pointer-events-auto h-9 px-3 rounded-xl text-sm font-semibold text-gray-700 hover:bg-red-500 flex items-center gap-2"
               >
                 <TrashIcon className="h-4 w-4" />
                 ลบทั้งหมด

@@ -231,9 +231,9 @@ export async function POST(req: NextRequest) {
         ? money(toNumber(body.totalPrice, 0))
         : itemsTotal;
 
-    if (!(totalPrice > 0)) {
+    if (totalPrice < 0) {
       return NextResponse.json(
-        { error: "ยอดรวมต้องมากกว่า 0 บาท" },
+        { error: "ยอดรวมต้องไม่น้อยกว่า 0 บาท" },
         { status: 400 },
       );
     }

@@ -162,10 +162,15 @@ export async function POST(req: Request, { params }: RouteContext) {
     },
   );
 
+  // Keep a hashed raw token for legacy lookup/index compatibility.
+  const rawInviteToken = generateToken(32);
+  const inviteTokenHash = hashToken(rawInviteToken);
+
   const createdInvite = await Invite.create({
     billId: bill._id,
     participantId: participant._id,
     createdBy: userId,
+    tokenHash: inviteTokenHash,
     expiresAt,
     maxUses,
     usedCount: 0,
