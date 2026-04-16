@@ -1,9 +1,9 @@
 'use client';
 
-import { useEffect, useMemo, useRef, useState, useCallback } from 'react';
+import { useEffect, useRef, useState, useCallback } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { BellIcon, CheckIcon, TrashIcon } from '@heroicons/react/24/outline';
+import { BellIcon, TrashIcon } from '@heroicons/react/24/outline';
 
 type NotificationType =
   | 'BILL_ADDED_YOU'
@@ -110,18 +110,6 @@ export default function NotificationBell() {
     return () => document.removeEventListener('mousedown', onClickOutside);
   }, [open]);
 
-  const markAllRead = async () => {
-    try {
-      await fetch('/api/notifications/mark-read', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ all: true }),
-      });
-    } finally {
-      await fetchList(tab);
-    }
-  };
-
   const clearAll = async () => {
     try {
       await fetch('/api/notifications/clear', { method: 'POST' });
@@ -186,8 +174,6 @@ export default function NotificationBell() {
       setProcessingId(null);
     }
   };
-
-  const headerTitle = useMemo(() => (tab === 'unread' ? 'Unread' : 'All'), [tab]);
 
   return (
     <div className="relative" ref={boxRef}>
