@@ -215,7 +215,14 @@ export default function NotificationBell() {
         <div className="fixed inset-x-2 top-16 sm:absolute sm:inset-x-auto sm:top-auto sm:right-0 mt-0 sm:mt-2 w-auto sm:w-[360px] rounded-2xl border border-black/10 bg-white shadow-[0_18px_50px_rgba(0,0,0,0.12)] overflow-hidden z-50">
           <div className="px-4 py-3 border-b border-black/5 flex items-center justify-between">
             <div className="font-semibold text-gray-900">แจ้งเตือน</div>
-            <div className="text-xs text-gray-500">{headerTitle}</div>
+            <button
+              type="button"
+              onClick={clearAll}
+              className="flex items-center gap-1 text-xs text-gray-500 hover:text-red-500"
+            >
+              <TrashIcon className="h-3.5 w-3.5" />
+              ลบทั้งหมด
+            </button>
           </div>
 
           <div className="px-3 py-2 border-b border-black/5 flex gap-2">
@@ -239,25 +246,6 @@ export default function NotificationBell() {
             >
               ทั้งหมด
             </button>
-
-            <div className="ml-auto flex gap-2">
-              <button
-                type="button"
-                onClick={markAllRead}
-                className="pointer-events-auto h-9 px-3 rounded-xl text-sm font-semibold text-gray-700 hover:bg-gray-50 flex items-center gap-2"
-              >
-                <CheckIcon className="h-4 w-4" />
-                อ่านแล้ว
-              </button>
-              <button
-                type="button"
-                onClick={clearAll}
-                className="pointer-events-auto h-9 px-3 rounded-xl text-sm font-semibold text-gray-700 hover:bg-red-500 flex items-center gap-2"
-              >
-                <TrashIcon className="h-4 w-4" />
-                ลบทั้งหมด
-              </button>
-            </div>
           </div>
 
           <div className="max-h-[60vh] sm:max-h-[420px] overflow-y-auto">
@@ -357,7 +345,7 @@ export default function NotificationBell() {
 
           <div className="px-4 py-3 border-t border-black/5 text-right">
             <Link   href="/settings?tab=notifications" className="text-sm font-semibold text-[#fb8c00] hover:text-[#e65100]">
-              กำหนดค่าแจ้งเตือน
+              ตั้งค่าการแจ้งเตือน
             </Link>
           </div>
         </div>
