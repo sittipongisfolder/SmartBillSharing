@@ -12,6 +12,7 @@ import {
 } from '@heroicons/react/24/outline';
 import { ClipboardIcon, CheckIcon } from '@heroicons/react/24/outline';
 import { useSearchParams } from 'next/navigation';
+import QRCode from 'qrcode';
 
 const THAI_BANK_OPTIONS = [
   { id: 'kbank', name: 'กสิกรไทย', logoPath: '/banks/kbank.svg' },
@@ -59,6 +60,9 @@ type Profile = {
 type ProfileGetOk = { ok: true; profile: Profile };
 type ProfileGetErr = { ok: false; message: string };
 type ProfileGetResponse = ProfileGetOk | ProfileGetErr;
+
+const LINE_OA_ID = '@610buebz';
+const LINE_ADD_FRIEND_URL = `https://line.me/R/ti/p/${LINE_OA_ID}`;
 
 
 
@@ -638,6 +642,7 @@ function NotificationsCard() {
   const [linkedAt, setLinkedAt] = useState<string | null>(null);
 
   const [copied, setCopied] = useState(false);
+  const [lineQrDataUrl, setLineQrDataUrl] = useState<string | null>(null);
 
   const TYPES: Array<{ key: NotificationType; label: string; desc: string }> = [
     { key: 'BILL_CREATED_OWNER', label: 'สร้างบิล (เจ้าของ)', desc: 'คุณสร้างบิลสำเร็จ พร้อมรายละเอียดบิล' },
@@ -718,6 +723,29 @@ function NotificationsCard() {
 
     return () => clearInterval(t);
   }, [lineCode, lineLinked, loadLineStatus]);
+
+  useEffect(() => {
+    let alive = true;
+
+    (async () => {
+      try {
+        const qr = await QRCode.toDataURL(LINE_ADD_FRIEND_URL, {
+          width: 176,
+          margin: 1,
+        });
+
+        if (!alive) return;
+        setLineQrDataUrl(qr);
+      } catch {
+        if (!alive) return;
+        setLineQrDataUrl(null);
+      }
+    })();
+
+    return () => {
+      alive = false;
+    };
+  }, []);
 
   const toggleType = (t: NotificationType) => {
     setS((prev) => {
@@ -819,7 +847,7 @@ function NotificationsCard() {
           <div className="rounded-xl border border-green-200 bg-green-50 p-4">
             <div className="flex items-start justify-between gap-4">
               <div>
-                <div className="text-sm font-semibold text-green-900">เชื่อม LINE OA <span className="text-green-600">(@610buebz)</span> เพื่อรับแจ้งเตือน</div>
+                <div className="text-sm font-semibold text-green-900">เชื่อม LINE OA <span className="text-green-600">({LINE_OA_ID})</span> เพื่อรับแจ้งเตือน</div>
 
                 {lineChecked && lineLinked ? (
                   <div className="text-xs text-green-700 mt-1">
@@ -829,6 +857,27 @@ function NotificationsCard() {
                 ) : (
                   <div className="text-xs text-green-700 mt-1">
                     กดขอรหัส แล้วไปพิมพ์ใน LINE OA: <b>LINK xxxxxx</b>
+                  </div>
+                )}
+
+                {lineQrDataUrl && (
+                  <div className="mt-3 inline-flex flex-col items-center rounded-xl border border-green-200 bg-white p-2">
+                    <Image
+                      src={lineQrDataUrl}
+                      alt="QR สำหรับเพิ่มเพื่อน LINE OA"
+                      width={112}
+                      height={112}
+                      unoptimized
+                      className="h-28 w-28 rounded-md"
+                    />
+                    <a
+                      href={LINE_ADD_FRIEND_URL}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="mt-2 text-[11px] font-semibold text-green-700 hover:text-green-800 underline"
+                    >
+                      สแกนเพื่อรับแจ้งเตือนหรือแตะเพื่อเปิดลิงก์
+                    </a>
                   </div>
                 )}
               </div>
