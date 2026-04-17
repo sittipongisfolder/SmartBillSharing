@@ -133,42 +133,28 @@ function billStatusTH(s: BillLean['billStatus']) {
 }
 
 async function ensureSettings(userId: mongoose.Types.ObjectId) {
-  const s = await NotificationSettings.findOne({ userId })
+  await NotificationSettings.updateOne(
+    { userId },
+    {
+      $set: {
+        enabledTypes: DEFAULT_TYPES,
+      },
+      $setOnInsert: {
+        dailySummaryEnabled: true,
+        dailySummaryHour: 9,
+      },
+    },
+    { upsert: true }
+  );
+
+  return NotificationSettings.findOne({ userId })
     .select('enabledTypes dailySummaryEnabled dailySummaryHour lastDailySummaryAt')
     .lean();
-  if (s) {
-    const enabled = Array.isArray(s.enabledTypes) ? s.enabledTypes : [];
-    const missing = DEFAULT_TYPES.filter((t) => !enabled.includes(t));
-
-    // Keep existing users in sync when new notification types are introduced.
-    if (missing.length > 0) {
-      await NotificationSettings.updateOne(
-        { userId },
-        { $addToSet: { enabledTypes: { $each: missing } } },
-      );
-
-      return NotificationSettings.findOne({ userId })
-        .select('enabledTypes dailySummaryEnabled dailySummaryHour lastDailySummaryAt')
-        .lean();
-    }
-
-    return s;
-  }
-
-  await NotificationSettings.create({
-    userId,
-    enabledTypes: DEFAULT_TYPES,
-    dailySummaryEnabled: true,
-    dailySummaryHour: 9,
-  });
-
-  return NotificationSettings.findOne({ userId }).lean();
 }
 
 async function isEnabled(userId: mongoose.Types.ObjectId, type: NotificationType): Promise<boolean> {
-  const s = await ensureSettings(userId);
-  const enabled = Array.isArray(s?.enabledTypes) ? s.enabledTypes : [];
-  return enabled.includes(type);
+  await ensureSettings(userId);
+  return DEFAULT_TYPES.includes(type);
 }
 
 async function createOnce(args: {

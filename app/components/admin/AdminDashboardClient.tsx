@@ -9,6 +9,9 @@ type OverviewStats = {
   billsToday: number;
   openBills: number;
   closedBills: number;
+  paidBills: number;
+  unpaidBills: number;
+  pendingBills: number;
 };
 
 // ✅ รองรับทั้ง id และ _id (บาง API ส่ง _id)
@@ -201,16 +204,22 @@ export default function AdminDashboardClient() {
 
         {tab === "overview" && (
           <div className="mt-6 space-y-6">
-            <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-5">
-              <StatCard title="Users" value={stats?.totalUsers ?? 0} />
-              <StatCard title="Bills" value={stats?.totalBills ?? 0} />
-              <StatCard title="Bills Today" value={stats?.billsToday ?? 0} />
-              <StatCard title="Open" value={stats?.openBills ?? 0} />
-              <StatCard title="Closed" value={stats?.closedBills ?? 0} />
+            {/* Row 1: General counts */}
+            <div className="grid gap-4 sm:grid-cols-3">
+              <StatCard title="Users" value={stats?.totalUsers ?? 0} color="orange" />
+              <StatCard title="Total Bills" value={stats?.totalBills ?? 0} color="orange" />
+              <StatCard title="Bills Today" value={stats?.billsToday ?? 0} color="orange" />
             </div>
 
-            <Section title="Latest Bills">
-              <BillsTable bills={Array.isArray(bills) ? bills.slice(0, 10) : []} />
+            {/* Row 2: Status breakdown */}
+            <div className="grid gap-4 sm:grid-cols-3">
+              <StatCard title="Paid" value={stats?.paidBills ?? 0} color="green" />
+              <StatCard title="Unpaid" value={stats?.unpaidBills ?? 0} color="red" />
+              <StatCard title="Pending" value={stats?.pendingBills ?? 0} color="yellow" />
+            </div>
+
+            <Section title="Latest Bills (คลิก แก้ไขบิล เพื่อดูรายละเอียดและยอดเงิน)">
+              <BillsTable bills={Array.isArray(bills) ? bills.slice(0, 10) : []} hideTotal />
             </Section>
           </div>
         )}
@@ -223,16 +232,14 @@ export default function AdminDashboardClient() {
                   value={q}
                   onChange={(e) => setQ(e.target.value)}
                   placeholder="ค้นหา title / email / userId"
-                  className="w-full rounded-xl border border-gray-200 bg-white px-4 py-2 text-sm outline-none focus:border-orange-300"
+                  className="w-full rounded-xl border border-gray-200 text-black bg-white px-4 py-2 text-sm outline-none focus:border-orange-300"
                 />
                 <select
                   value={status}
                   onChange={(e) => setStatus(e.target.value)}
-                  className="w-full rounded-xl border border-gray-200 bg-white px-4 py-2 text-sm outline-none focus:border-orange-300"
+                  className="w-full rounded-xl border border-gray-200 bg-white text-black px-4 py-2 text-sm outline-none focus:border-orange-300"
                 >
                   <option value="">ทุกสถานะ</option>
-                  <option value="open">open</option>
-                  <option value="closed">closed</option>
                   <option value="unpaid">unpaid</option>
                   <option value="pending">pending</option>
                   <option value="paid">paid</option>
@@ -240,7 +247,7 @@ export default function AdminDashboardClient() {
                 <select
                   value={splitType}
                   onChange={(e) => setSplitType(e.target.value)}
-                  className="w-full rounded-xl border border-gray-200 bg-white px-4 py-2 text-sm outline-none focus:border-orange-300"
+                  className="w-full rounded-xl border border-gray-200 text-black bg-white px-4 py-2 text-sm outline-none focus:border-orange-300"
                 >
                   <option value="">ทุกวิธีหาร</option>
                   <option value="equal">equal</option>
@@ -290,7 +297,6 @@ export default function AdminDashboardClient() {
                       <th>UserId</th>
                       <th>Role</th>
                       <th className="text-right">Bills</th>
-                      <th className="text-right">Total</th>
                       <th className="text-right">Action</th>
                     </tr>
                   </thead>
@@ -306,7 +312,6 @@ export default function AdminDashboardClient() {
                           </span>
                         </td>
                         <td className="text-right">{u.bills}</td>
-                        <td className="text-right">{thb(u.total)}</td>
                         <td className="text-right space-x-2">
                           <button
                             onClick={() => {
@@ -360,12 +365,20 @@ export default function AdminDashboardClient() {
   );
 }
 
-function StatCard(props: { title: string; value: number }) {
+const statColorMap: Record<string, { bar: string; badge: string; text: string }> = {
+  orange: { bar: "bg-orange-500", badge: "bg-orange-50 text-orange-700", text: "text-gray-900" },
+  green:  { bar: "bg-green-500",  badge: "bg-green-50 text-green-700",   text: "text-green-800" },
+  red:    { bar: "bg-red-400",    badge: "bg-red-50 text-red-700",       text: "text-red-800"   },
+  yellow: { bar: "bg-yellow-400", badge: "bg-yellow-50 text-yellow-700", text: "text-yellow-800" },
+};
+
+function StatCard(props: { title: string; value: number; color?: string }) {
+  const c = statColorMap[props.color ?? "orange"];
   return (
     <div className="rounded-2xl bg-white p-4 shadow-sm ring-1 ring-gray-100">
       <div className="text-xs font-medium text-gray-500">{props.title}</div>
-      <div className="mt-2 text-2xl font-bold text-gray-900">{props.value}</div>
-      <div className="mt-2 h-1 w-16 rounded-full bg-orange-500" />
+      <div className={`mt-2 text-2xl font-bold ${c.text}`}>{props.value}</div>
+      <div className={`mt-2 h-1 w-16 rounded-full ${c.bar}`} />
     </div>
   );
 }
@@ -379,7 +392,7 @@ function Section(props: { title: string; children: React.ReactNode }) {
   );
 }
 
-function BillsTable({ bills }: { bills: BillListItem[] }) {
+function BillsTable({ bills, hideTotal }: { bills: BillListItem[]; hideTotal?: boolean }) {
   const rows = Array.isArray(bills) ? bills : [];
 
   return (
@@ -391,7 +404,7 @@ function BillsTable({ bills }: { bills: BillListItem[] }) {
             <th>Owner</th>
             <th>Status</th>
             <th>Split</th>
-            <th className="text-right">Total</th>
+            {!hideTotal && <th className="text-right">Total</th>}
             <th>Created</th>
             <th className="text-right">Action</th>
           </tr>
@@ -413,7 +426,7 @@ function BillsTable({ bills }: { bills: BillListItem[] }) {
                   </span>
                 </td>
                 <td className="text-gray-600">{b.splitType ?? "-"}</td>
-                <td className="text-right font-semibold">{thb(b.total)}</td>
+                {!hideTotal && <td className="text-right font-semibold">{thb(b.total)}</td>}
                 <td className="text-gray-600 text-xs">{fmtDate(b.createdAt)}</td>
 
                 <td className="text-right">

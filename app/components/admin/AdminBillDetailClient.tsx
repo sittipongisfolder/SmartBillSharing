@@ -5,6 +5,17 @@ import { useParams, useRouter } from "next/navigation";
 
 type SplitType = "equal" | "percentage" | "personal";
 type BillStatus = "unpaid" | "pending" | "paid";
+type PaymentStatus = "unpaid" | "pending" | "paid";
+
+type ParticipantRow = {
+  _id?: string;
+  kind?: string;
+  userId?: string;
+  guestId?: string;
+  name?: string;
+  amount: string; // string เพื่อคุม input
+  paymentStatus: PaymentStatus;
+};
 
 type ApiGetBill = {
   ok: boolean;
@@ -38,6 +49,15 @@ const n = (v: string) => {
   return Number.isFinite(x) ? x : 0;
 };
 
+const asNum = (v: unknown): number | null => {
+  if (typeof v === "number" && Number.isFinite(v)) return v;
+  if (typeof v === "string") {
+    const x = Number(v);
+    return Number.isFinite(x) ? x : null;
+  }
+  return null;
+};
+
 const money2 = (v: number) => Math.round(v * 100) / 100;
 
 function normalizeItems(raw: unknown): ItemRow[] {
@@ -62,20 +82,9 @@ function normalizeItems(raw: unknown): ItemRow[] {
           ? r.qty
           : "1";
 
-    // บางระบบเก็บ unit_price / unitPrice / price (แต่ price อาจเป็น lineTotal)
-    const unitPriceFromUnit =
-      typeof r.unit_price === "number"
-        ? r.unit_price
-        : typeof r.unitPrice === "number"
-          ? r.unitPrice
-          : null;
-
-    const priceField =
-      typeof r.price === "number"
-        ? r.price
-        : typeof r.price === "string"
-          ? Number(r.price)
-          : null;
+    // บางระบบเก็บ unit_price / unitPrice / price / line_total เป็น number หรือ string
+    const unitPriceFromUnit = asNum(r.unit_price) ?? asNum(r.unitPrice);
+    const lineTotalLike = asNum(r.line_total) ?? asNum(r.price) ?? asNum(r.total);
 
     const qtyNum = Math.max(1, n(qtyVal));
     // ถ้ามี unit_price ใช้เลย
@@ -83,8 +92,8 @@ function normalizeItems(raw: unknown): ItemRow[] {
     const unitPrice =
       unitPriceFromUnit != null
         ? unitPriceFromUnit
-        : priceField != null
-          ? priceField / qtyNum
+        : lineTotalLike != null
+          ? lineTotalLike / qtyNum
           : 0;
 
     return {
@@ -117,8 +126,8 @@ export default function AdminBillDetailClient() {
 
   const [items, setItems] = useState<ItemRow[]>([{ id: makeId(), name: "", qty: "1", unitPrice: "0" }]);
 
-  // เก็บ participants แบบ JSON เผื่ออยากแก้ทีหลัง (ไม่บังคับ)
-  const [participantsJson, setParticipantsJson] = useState<string>("[]");
+  // เก็บ participants แบบ structured
+  const [participants, setParticipants] = useState<ParticipantRow[]>([]);
 
   // ✅ รวมราคาอัตโนมัติจาก items
   const computedTotal = useMemo(() => {
@@ -150,7 +159,16 @@ export default function AdminBillDetailClient() {
         const normalized = normalizeItems(b.items ?? []);
         setItems(normalized.length ? normalized : [{ id: makeId(), name: "", qty: "1", unitPrice: "0" }]);
 
-        setParticipantsJson(JSON.stringify(b.participants ?? [], null, 2));
+        const raw = Array.isArray(b.participants) ? b.participants as Array<Record<string, unknown>> : [];
+        setParticipants(raw.map((p) => ({
+          _id: typeof p._id === "string" ? p._id : undefined,
+          kind: typeof p.kind === "string" ? p.kind : undefined,
+          userId: typeof p.userId === "string" ? p.userId : undefined,
+          guestId: typeof p.guestId === "string" ? p.guestId : undefined,
+          name: typeof p.name === "string" ? p.name : "-",
+          amount: typeof p.amount === "number" ? String(p.amount) : "0",
+          paymentStatus: (["unpaid","pending","paid"].includes(String(p.paymentStatus)) ? p.paymentStatus : "unpaid") as PaymentStatus,
+        })));
       } catch (e: unknown) {
         setError(e instanceof Error ? e.message : "Network error");
       } finally {
@@ -194,16 +212,16 @@ export default function AdminBillDetailClient() {
       };
     });
 
-    // participants: ไม่บังคับแก้ แต่ถ้าแก้ JSON ก็ส่งไปด้วย
-    let participants: Array<Record<string, unknown>> = [];
-    try {
-      const parsed = JSON.parse(participantsJson) as unknown;
-      participants = Array.isArray(parsed) ? (parsed as Array<Record<string, unknown>>) : [];
-    } catch {
-      setError("participants JSON ไม่ถูกต้อง");
-      setSaving(false);
-      return;
-    }
+    // participants: ใช้ structured state
+    const participantsForSave = participants.map((p) => ({
+      ...(p._id ? { _id: p._id } : {}),
+      ...(p.kind ? { kind: p.kind } : {}),
+      ...(p.userId ? { userId: p.userId } : {}),
+      ...(p.guestId ? { guestId: p.guestId } : {}),
+      name: p.name,
+      amount: Math.max(0, n(p.amount)),
+      paymentStatus: p.paymentStatus,
+    }));
 
     const payload = {
       title,
@@ -211,7 +229,7 @@ export default function AdminBillDetailClient() {
       billStatus,
       total: computedTotal, // ✅ รวมจากรายการ
       items: itemsForSave,
-      participants,
+      participants: participantsForSave,
     };
 
     try {
@@ -241,7 +259,7 @@ export default function AdminBillDetailClient() {
 
   return (
     <div className="min-h-screen bg-[#fff7ee] p-6">
-      <div className="mx-auto max-w-5xl rounded-2xl bg-white p-6 shadow ring-1 ring-gray-100">
+      <div className="mx-auto max-w-5xl rounded-2xl bg-white  text-black p-6 shadow ring-1 ring-gray-100">
         <div className="flex items-center justify-between">
           <h1 className="text-xl font-bold">แก้ไขบิล (Admin)</h1>
           <button onClick={() => router.push("/admin")} className="text-sm underline text-gray-600">
@@ -255,7 +273,7 @@ export default function AdminBillDetailClient() {
           <div className="md:col-span-2">
             <div className="text-sm font-semibold text-gray-700">Title</div>
             <input
-              className="mt-1 w-full rounded-xl border border-gray-200 px-4 py-2"
+              className="mt-1 w-full rounded-xl border border-gray-200 px-4 py-2 text-gray-900"
               value={title}
               onChange={(e) => setTitle(e.target.value)}
             />
@@ -264,7 +282,7 @@ export default function AdminBillDetailClient() {
           <div>
             <div className="text-sm font-semibold text-gray-700">Total (Auto)</div>
             <input
-              className="mt-1 w-full rounded-xl border border-gray-200 px-4 py-2 bg-gray-50"
+              className="mt-1 w-full rounded-xl border border-gray-200 px-4 py-2 bg-gray-50 text-gray-900"
               value={computedTotal.toFixed(2)}
               readOnly
             />
@@ -273,7 +291,7 @@ export default function AdminBillDetailClient() {
           <div>
             <div className="text-sm font-semibold text-gray-700">Split Type</div>
             <select
-              className="mt-1 w-full rounded-xl border border-gray-200 px-4 py-2"
+              className="mt-1 w-full rounded-xl border border-gray-200 px-4 py-2 text-gray-900"
               value={splitType}
               onChange={(e) => setSplitType(e.target.value as SplitType)}
             >
@@ -286,7 +304,7 @@ export default function AdminBillDetailClient() {
           <div>
             <div className="text-sm font-semibold text-gray-700">Bill Status</div>
             <select
-              className="mt-1 w-full rounded-xl border border-gray-200 px-4 py-2"
+              className="mt-1 w-full rounded-xl border border-gray-200 px-4 py-2 text-gray-900"
               value={billStatus}
               onChange={(e) => setBillStatus(e.target.value as BillStatus)}
             >
@@ -328,7 +346,7 @@ export default function AdminBillDetailClient() {
                     <tr key={it.id}>
                       <td className="py-3">
                         <input
-                          className="w-full rounded-lg border border-gray-200 px-3 py-2"
+                          className="w-full rounded-lg border border-gray-200 px-3 py-2 text-gray-900"
                           value={it.name}
                           onChange={(e) => updateItem(it.id, { name: e.target.value })}
                           placeholder="เช่น ข้าวผัด"
@@ -336,7 +354,7 @@ export default function AdminBillDetailClient() {
                       </td>
                       <td>
                         <input
-                          className="w-full rounded-lg border border-gray-200 px-3 py-2"
+                          className="w-full rounded-lg border border-gray-200 px-3 py-2 text-gray-900"
                           value={it.qty}
                           onChange={(e) => updateItem(it.id, { qty: e.target.value })}
                           inputMode="numeric"
@@ -344,7 +362,7 @@ export default function AdminBillDetailClient() {
                       </td>
                       <td>
                         <input
-                          className="w-full rounded-lg border border-gray-200 px-3 py-2"
+                          className="w-full rounded-lg border border-gray-200 px-3 py-2 text-gray-900"
                           value={it.unitPrice}
                           onChange={(e) => updateItem(it.id, { unitPrice: e.target.value })}
                           inputMode="decimal"
@@ -370,14 +388,62 @@ export default function AdminBillDetailClient() {
           </div>
         </div>
 
-        {/* participants JSON (เผื่อแก้ไข) */}
+        {/* participants table */}
         <div className="mt-8">
-          <div className="text-base font-semibold text-gray-900">Participants (แก้ไขแบบ JSON)</div>
-          <textarea
-            className="mt-2 h-48 w-full rounded-xl border border-gray-200 px-4 py-2 font-mono text-xs"
-            value={participantsJson}
-            onChange={(e) => setParticipantsJson(e.target.value)}
-          />
+          <div className="text-base font-semibold text-gray-900">Participants</div>
+          {participants.length === 0 ? (
+            <div className="mt-2 text-sm text-gray-500">ไม่มีผู้เข้าร่วม</div>
+          ) : (
+            <div className="mt-3 overflow-x-auto">
+              <table className="min-w-full text-left text-sm">
+                <thead className="text-gray-500">
+                  <tr>
+                    <th className="py-2 pr-4">ชื่อ</th>
+                    <th className="pr-4">Kind</th>
+                    <th className="w-36 pr-4">จำนวนเงิน (฿)</th>
+                    <th className="w-40">สถานะการจ่าย</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-gray-100">
+                  {participants.map((p, idx) => (
+                    <tr key={p._id ?? idx}>
+                      <td className="py-3 pr-4 font-medium text-gray-900">{p.name ?? "-"}</td>
+                      <td className="pr-4 text-gray-500 text-xs">{p.kind ?? "-"}</td>
+                      <td className="pr-4">
+                        <input
+                          className="w-full rounded-lg border border-gray-200 px-3 py-2 text-gray-900"
+                          value={p.amount}
+                          inputMode="decimal"
+                          onChange={(e) =>
+                            setParticipants((prev) =>
+                              prev.map((x, i) => (i === idx ? { ...x, amount: e.target.value } : x))
+                            )
+                          }
+                        />
+                      </td>
+                      <td>
+                        <select
+                          className="w-full rounded-lg border border-gray-200 px-3 py-2 text-gray-900"
+                          value={p.paymentStatus}
+                          onChange={(e) =>
+                            setParticipants((prev) =>
+                              prev.map((x, i) =>
+                                i === idx ? { ...x, paymentStatus: e.target.value as PaymentStatus } : x
+                              )
+                            )
+                          }
+                        >
+                          <option value="unpaid">unpaid</option>
+                          <option value="pending">pending</option>
+                          <option value="paid">paid</option>
+                        </select>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
         </div>
 
         <div className="mt-6">

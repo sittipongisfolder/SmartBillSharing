@@ -12,11 +12,12 @@ export const dynamic = 'force-dynamic';
 
 type Res = { ok: boolean; message: string; processed?: number };
 
-const tz = 'Asia/Bangkok';
+const BANGKOK_TZ = 'Asia/Bangkok';
+const BANGKOK_UTC_OFFSET_HOURS = 7;
 
 const dateKeyTH = (d: Date) => {
   const parts = new Intl.DateTimeFormat('en-CA', {
-    timeZone: tz,
+    timeZone: BANGKOK_TZ,
     year: 'numeric',
     month: '2-digit',
     day: '2-digit',
@@ -30,8 +31,15 @@ const dateKeyTH = (d: Date) => {
 
 const hourTH = (d: Date) =>
   Number(
-    new Intl.DateTimeFormat('en-US', { timeZone: tz, hour: '2-digit', hour12: false }).format(d)
+    new Intl.DateTimeFormat('en-US', { timeZone: BANGKOK_TZ, hour: '2-digit', hour12: false }).format(d)
   );
+
+const bangkokDayUtcRange = (d: Date) => {
+  const [y, m, day] = dateKeyTH(d).split('-').map((v) => Number(v));
+  const startUtc = new Date(Date.UTC(y, m - 1, day, -BANGKOK_UTC_OFFSET_HOURS, 0, 0, 0));
+  const endUtc = new Date(startUtc.getTime() + 24 * 60 * 60 * 1000);
+  return { startUtc, endUtc };
+};
 
 const daysBetween = (from: Date, to: Date) =>
   Math.max(0, Math.floor((to.getTime() - from.getTime()) / (1000 * 60 * 60 * 24)));
@@ -61,17 +69,16 @@ export async function GET(req: Request) {
   const now = new Date();
   const today = dateKeyTH(now);
   const h = hourTH(now);
+  const { startUtc: bangkokDayStartUtc, endUtc: bangkokDayEndUtc } = bangkokDayUtcRange(now);
 
-  const settingsList = await NotificationSettings.find({
-    dailySummaryEnabled: true,
-    enabledTypes: { $in: ['DAILY_UNPAID_SUMMARY'] },
-  })
-    .select('userId dailySummaryHour lastDailySummaryAt')
+  const settingsList = await NotificationSettings.find({})
+    .select('userId dailySummaryEnabled dailySummaryHour lastDailySummaryAt')
     .lean();
 
   let processed = 0;
   let scannedUsers = 0;
   let skippedBeforeHour = 0;
+  let skippedDisabled = 0;
   let skippedAlreadySentToday = 0;
   let skippedNoUnpaid = 0;
   let skippedAlreadyHasNotification = 0;
@@ -82,7 +89,15 @@ export async function GET(req: Request) {
   for (const s of settingsList) {
     scannedUsers += 1;
 
-    const hour = typeof s.dailySummaryHour === 'number' ? s.dailySummaryHour : 9;
+    if (s.dailySummaryEnabled === false) {
+      skippedDisabled += 1;
+      continue;
+    }
+
+    const hour =
+      typeof s.dailySummaryHour === 'number' && Number.isFinite(s.dailySummaryHour)
+        ? Math.min(23, Math.max(0, Math.trunc(s.dailySummaryHour)))
+        : 9;
     if (h < hour) {
       skippedBeforeHour += 1;
       continue;
@@ -132,7 +147,7 @@ export async function GET(req: Request) {
     const already = await Notification.findOne({
       userId,
       type: 'DAILY_UNPAID_SUMMARY',
-      createdAt: { $gte: new Date(now.getTime() - 24 * 60 * 60 * 1000) },
+      createdAt: { $gte: bangkokDayStartUtc, $lt: bangkokDayEndUtc },
     })
       .select('_id')
       .lean();
@@ -179,6 +194,7 @@ export async function GET(req: Request) {
     processed,
     scannedUsers,
     skippedBeforeHour,
+    skippedDisabled,
     skippedAlreadySentToday,
     skippedNoUnpaid,
     skippedAlreadyHasNotification,

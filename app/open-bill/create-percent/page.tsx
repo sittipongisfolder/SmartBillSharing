@@ -644,6 +644,14 @@ function CreatePercentPageInner() {
   const onRejectOcr = () => {
     ocrPreview.closePreview();
     setOcrImageFile(null);
+    setSelectedFileName('');
+    setSelectedImagePreview(null);
+
+    localStorage.removeItem('ocrReceiptImageUrl');
+    localStorage.removeItem('ocrReceiptImagePublicId');
+
+    if (fileInputRef.current) fileInputRef.current.value = '';
+    if (directUploadInputRef.current) directUploadInputRef.current.value = '';
   };
 
   const resetForm = () => {
@@ -1077,7 +1085,6 @@ function CreatePercentPageInner() {
           ...localRow,
           participantId: matched._id ? String(matched._id) : localRow.participantId,
           guestId: matched.guestId ? String(matched.guestId) : localRow.guestId,
-          amount: typeof matched.amount === 'number' ? matched.amount : localRow.amount,
           joinedAt: matched.joinedAt ?? localRow.joinedAt,
           kind: matched.kind ?? localRow.kind,
           name: String(matched.name ?? localRow.name),
@@ -1367,6 +1374,9 @@ function CreatePercentPageInner() {
       if (!title.trim()) return alert('กรุณากรอก Bill Title');
       if (cleanedItems.length === 0) return alert('กรุณาเพิ่มรายการอาหารอย่างน้อย 1 รายการ');
       if (cleanedParticipantsBase.length === 0) return alert('กรุณาเลือก Participants อย่างน้อย 1 คน');
+      if (cleanedParticipantsBase.length <= 1) {
+        return alert('ต้องมีผู้เข้าร่วมอย่างน้อย 2 คน ระบบนี้ใช้สำหรับหารบิล');
+      }
 
       const itemsTotal = money(cleanedItems.reduce((sum, it) => sum + it.price, 0));
       const effectiveTotal = typeof totalPrice === 'number' && totalPrice > 0 ? money(totalPrice) : itemsTotal;

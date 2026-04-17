@@ -503,11 +503,6 @@ function CreateBillPageInner() {
         setTitle((prev) => (prev.trim() ? prev : ocrTitle));
       }
 
-      // ✅ Set description from raw_text
-      if (rawText) {
-        setDescription(rawText);
-      }
-
       // ✅ ใช้เฉพาะรายการที่ user ติ๊กเลือกจาก modal
       const mappedFromSelected: ItemRow[] = accepted.selectedItems
         .map((it) => {
@@ -633,16 +628,8 @@ function CreateBillPageInner() {
     }
   };
 
-  const onRejectOcr = async () => {
-    const keepReceiptImage = window.confirm(
-      'ไม่ใช้ข้อมูล OCR ใช่ไหม?\n\nกด OK = เก็บรูปบิลไว้สำหรับแนบตอนบันทึกบิล\nกด Cancel = ล้างรูปและข้อมูล OCR ทั้งหมด'
-    );
-
+  const onRejectOcr = () => {
     ocrPreview.closePreview();
-
-    if (keepReceiptImage) {
-      return;
-    }
 
     setOcrImageFile(null);
     setSelectedFileName('');
@@ -746,27 +733,50 @@ function CreateBillPageInner() {
     setTotalPrice(money(totalAmount));
   };
 
+  const equalSplitAmounts = useMemo(() => {
+    const total = typeof totalPrice === 'number' && totalPrice > 0 ? money(totalPrice) : 0;
+    if (total <= 0 || selectedCount <= 0) return [] as number[];
+
+    const base = money(total / selectedCount);
+    const amounts = Array.from({ length: selectedCount }, () => base);
+    const sum = money(amounts.reduce((s, v) => s + v, 0));
+    const diff = money(total - sum);
+
+    if (diff !== 0) {
+      const last = amounts.length - 1;
+      amounts[last] = money(amounts[last] + diff);
+    }
+
+    return amounts;
+  }, [totalPrice, selectedCount]);
+
   useEffect(() => {
     const t = typeof totalPrice === 'number' ? money(totalPrice) : 0;
 
     if (t > 0 && selectedCount > 0) {
       const share = money(t / selectedCount);
       setSharePerPerson(share);
-      setParticipants((prev) =>
-        prev.map((p) => {
+      setParticipants((prev) => {
+        let selectedIndex = 0;
+
+        return prev.map((p) => {
           const isSelected =
             (p.kind === 'user' && !!p.userId) ||
             p.kind === 'guest_placeholder' ||
             p.kind === 'guest';
 
-          return isSelected ? { ...p, amount: share } : { ...p, amount: 0 };
-        })
-      );
+          if (!isSelected) return { ...p, amount: 0 };
+
+          const amount = money(equalSplitAmounts[selectedIndex] ?? 0);
+          selectedIndex += 1;
+          return { ...p, amount };
+        });
+      });
     } else {
       setSharePerPerson(0);
       setParticipants((prev) => prev.map((p) => ({ ...p, amount: 0 })));
     }
-  }, [totalPrice, selectedCount]);
+  }, [totalPrice, selectedCount, equalSplitAmounts]);
 
   const handleAmountChange = (e: ChangeEvent<HTMLInputElement>) => {
     const normalized = normalizeMoneyInput(e.target.value);
@@ -777,8 +787,8 @@ function CreateBillPageInner() {
   const summary = useMemo(() => {
     const total = typeof totalPrice === 'number' && totalPrice > 0 ? money(totalPrice) : 0;
 
-    const rows: SummaryRow[] = selectedParticipants.map((p) => {
-      const amount = money(toNumber(p.amount, 0));
+    const rows: SummaryRow[] = selectedParticipants.map((p, index) => {
+      const amount = money(equalSplitAmounts[index] ?? 0);
       const percent = total > 0 ? (amount / total) * 100 : 0;
       const percentInput = round2(toNumber(p.percent, 0));
 
@@ -792,22 +802,8 @@ function CreateBillPageInner() {
       };
     });
 
-    if (rows.length > 0 && total > 0) {
-      const sumAmt = money(rows.reduce((s, r) => s + r.amount, 0));
-      const diff = money(total - sumAmt);
-      if (diff !== 0) {
-        const last = rows.length - 1;
-        const nextAmt = money(rows[last].amount + diff);
-        rows[last] = {
-          ...rows[last],
-          amount: nextAmt,
-          percent: total > 0 ? (nextAmt / total) * 100 : 0,
-        };
-      }
-    }
-
     return { total, rows };
-  }, [totalPrice, selectedParticipants]);
+  }, [totalPrice, selectedParticipants, equalSplitAmounts]);
 
   const buildDraftPayload = () => {
     const cleanedItems = itemList
@@ -845,14 +841,14 @@ function CreateBillPageInner() {
         if (p.kind === 'user') return !!p.userId;
         return p.kind === 'guest_placeholder' || p.kind === 'guest';
       })
-      .map((p) => ({
+      .map((p, index) => ({
         participantId: p.participantId,
         kind: p.kind,
         userId: p.userId,
         guestId: p.guestId,
         name: p.name.trim(),
         percent: p.percent,
-        amount: money(toNumber(p.amount, 0)),
+        amount: money(equalSplitAmounts[index] ?? 0),
       }));
 
     const itemsTotal = money(cleanedItems.reduce((sum, it) => sum + it.price, 0));
@@ -887,6 +883,9 @@ function CreateBillPageInner() {
     if (payload.participants.length === 0) {
       throw new Error('กรุณาเลือก Participants อย่างน้อย 1 คน');
     }
+    if (payload.participants.length <= 1) {
+      throw new Error('ต้องมีผู้เข้าร่วมอย่างน้อย 2 คน ระบบนี้ใช้สำหรับหารบิล');
+    }
     if (!(Number(payload.totalPrice) > 0)) {
       throw new Error('ยอดรวมต้องมากกว่า 0 บาท');
     }
@@ -905,7 +904,6 @@ function CreateBillPageInner() {
           ...localRow,
           participantId: matched._id ? String(matched._id) : localRow.participantId,
           guestId: matched.guestId ? String(matched.guestId) : localRow.guestId,
-          amount: typeof matched.amount === 'number' ? matched.amount : localRow.amount,
           joinedAt: matched.joinedAt ?? localRow.joinedAt,
           kind: matched.kind ?? localRow.kind,
           name: String(matched.name ?? localRow.name),

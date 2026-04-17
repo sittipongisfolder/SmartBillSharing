@@ -267,6 +267,7 @@ function CreateBillPersonalPageInner() {
   ]);
 
   const [description, setDescription] = useState('');
+  const [totalPrice, setTotalPrice] = useState<number | ''>(0);
   const [selectedFileName, setSelectedFileName] = useState('');
   const [uploading, setUploading] = useState(false);
   const [submitting, setSubmitting] = useState(false);
@@ -458,6 +459,23 @@ function CreateBillPersonalPageInner() {
     );
   }, [selectedIds]);
 
+  useEffect(() => {
+    const itemsTotal = money(
+      itemList.reduce((sum, it) => {
+        const qty = toQty(it.qty);
+        const unit = money(parseFloat(it.price) || 0);
+        return sum + qty * unit;
+      }, 0)
+    );
+    setTotalPrice(itemsTotal);
+  }, [itemList]);
+
+  const handleAmountChange = (e: ChangeEvent<HTMLInputElement>) => {
+    const normalized = normalizeMoneyInput(e.target.value);
+    if (normalized === '') setTotalPrice('');
+    else setTotalPrice(money(Number(normalized)));
+  };
+
   const calc = useMemo(() => {
     const lineTotals = itemList.map((it) => {
       const qty = toQty(it.qty);
@@ -466,7 +484,11 @@ function CreateBillPersonalPageInner() {
       return { ...it, qty, unit, lineTotal };
     });
 
-    const total = money(lineTotals.reduce((s, it) => s + it.lineTotal, 0));
+    const itemsTotal = money(lineTotals.reduce((s, it) => s + it.lineTotal, 0));
+    const total =
+      typeof totalPrice === 'number' && totalPrice > 0
+        ? money(totalPrice)
+        : itemsTotal;
     const validIds = new Set(selectedParticipants.map((p) => p.localId));
 
     const personalByUser: Record<string, number> = {};
@@ -526,7 +548,7 @@ function CreateBillPersonalPageInner() {
     }
 
     return { total, sharedTotal, perParticipant, lineTotals, unassignedCount };
-  }, [itemList, selectedParticipants]);
+  }, [itemList, selectedParticipants, totalPrice]);
 
   const handleAddParticipant = () => {
     setIsAddParticipantOpen((v) => !v);
@@ -644,6 +666,7 @@ function CreateBillPersonalPageInner() {
     setSelectedFileName('');
     setSelectedImagePreview(null);
     setIsSelectedImageZoomOpen(false);
+    setTotalPrice(0);
     setUploading(false);
     setSubmitting(false);
     setIsAddParticipantOpen(false);
@@ -907,6 +930,14 @@ function CreateBillPersonalPageInner() {
   const onRejectOcr = () => {
     ocrPreview.closePreview();
     setOcrImageFile(null);
+    setSelectedFileName('');
+    setSelectedImagePreview(null);
+
+    localStorage.removeItem('ocrReceiptImageUrl');
+    localStorage.removeItem('ocrReceiptImagePublicId');
+
+    if (fileInputRef.current) fileInputRef.current.value = '';
+    if (directUploadInputRef.current) directUploadInputRef.current.value = '';
   };
 
   const buildDraftPayload = () => {
@@ -1219,6 +1250,11 @@ function CreateBillPersonalPageInner() {
 
       if (selectedParticipants.length === 0) {
         alert('กรุณาเลือก Participants อย่างน้อย 1 คน');
+        return;
+      }
+
+      if (selectedParticipants.length <= 1) {
+        alert('ต้องมีผู้เข้าร่วมอย่างน้อย 2 คน ระบบนี้ใช้สำหรับหารบิล');
         return;
       }
 
@@ -1816,6 +1852,18 @@ function CreateBillPersonalPageInner() {
                 currentUserEmail={currentUserEmail}
               />
             )}
+          </div>
+
+          <div className="mb-6">
+            <label className="block mb-1 text-sm text-gray-600">ยอดรวมทั้งหมด</label>
+            <input
+              type="text"
+              inputMode="decimal"
+              className="w-full p-3 border text-gray-800 placeholder:text-gray-400 border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#fb8c00]"
+              placeholder="0.00"
+              value={totalPrice === '' ? '' : money(totalPrice).toFixed(2)}
+              onChange={handleAmountChange}
+            />
           </div>
 
           <div className="mb-6 mt-6">

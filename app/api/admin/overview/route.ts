@@ -27,17 +27,20 @@ export async function GET() {
 
   const today = startOfToday();
 
-  const [totalUsers, totalBills, billsToday, openBills, closedBills] =
+  const [totalUsers, totalBills, billsToday, openBills, closedBills, paidBills, unpaidBills, pendingBills] =
     await Promise.all([
       User.countDocuments(),
       Bill.countDocuments(),
       Bill.countDocuments({ createdAt: { $gte: today } }),
       Bill.countDocuments({ billStatus: { $in: ["unpaid", "pending"] } }),
       Bill.countDocuments({ billStatus: "paid" }),
+      Bill.countDocuments({ billStatus: "paid" }),
+      Bill.countDocuments({ billStatus: "unpaid" }),
+      Bill.countDocuments({ billStatus: "pending" }),
     ]);
 
   return NextResponse.json({
     ok: true,
-    stats: { totalUsers, totalBills, billsToday, openBills, closedBills },
+    stats: { totalUsers, totalBills, billsToday, openBills, closedBills, paidBills, unpaidBills, pendingBills },
   });
 }

@@ -40,22 +40,6 @@ function toUserObjectId(id: string): mongoose.Types.ObjectId | null {
   return mongoose.Types.ObjectId.isValid(id) ? new mongoose.Types.ObjectId(id) : null;
 }
 
-function isNotificationType(v: unknown): v is NotificationType {
-  return typeof v === 'string' && (ALL_TYPES as readonly string[]).includes(v);
-}
-
-function toInt(v: unknown): number | null {
-  if (typeof v === 'number' && Number.isFinite(v)) return Math.trunc(v);
-  if (typeof v === 'string' && v.trim() !== '' && Number.isFinite(Number(v))) return Math.trunc(Number(v));
-  return null;
-}
-
-function uniqStrings(xs: string[]): string[] {
-  const s = new Set<string>();
-  xs.forEach((x) => s.add(x));
-  return Array.from(s);
-}
-
 function normalizeSettingsDocToDTO(doc: unknown): SettingsDTO {
   // default
   const fallback: SettingsDTO = {
@@ -64,68 +48,21 @@ function normalizeSettingsDocToDTO(doc: unknown): SettingsDTO {
     dailySummaryHour: 9,
     followGroupIds: [],
   };
-
   if (!isRecord(doc)) return fallback;
 
-  const enabledRaw = doc.enabledTypes;
-  const enabledTypes =
-    Array.isArray(enabledRaw) ? enabledRaw.filter(isNotificationType) : fallback.enabledTypes;
-
-  const dailySummaryEnabled =
-    typeof doc.dailySummaryEnabled === 'boolean' ? doc.dailySummaryEnabled : fallback.dailySummaryEnabled;
-
-  const hour = toInt(doc.dailySummaryHour);
-  const dailySummaryHour = hour != null && hour >= 0 && hour <= 23 ? hour : fallback.dailySummaryHour;
-
-  const followRaw = doc.followGroupIds;
-  const followGroupIds =
-    Array.isArray(followRaw) ? followRaw.map((x) => String(x)).filter((x) => x.length > 0) : fallback.followGroupIds;
+  const hourRaw = doc.dailySummaryHour;
+  const hour =
+    typeof hourRaw === 'number' && Number.isFinite(hourRaw)
+      ? Math.trunc(hourRaw)
+      : Number.NaN;
+  const enabledRaw = doc.dailySummaryEnabled;
+  const enabled = typeof enabledRaw === 'boolean' ? enabledRaw : fallback.dailySummaryEnabled;
 
   return {
-    enabledTypes,
-    dailySummaryEnabled,
-    dailySummaryHour,
-    followGroupIds,
-  };
-}
-
-function parsePatchBody(body: unknown): { ok: true; value: SettingsDTO } | { ok: false; message: string } {
-  if (!isRecord(body)) return { ok: false, message: 'Invalid JSON body' };
-
-  const enabledRaw = body.enabledTypes;
-  if (!Array.isArray(enabledRaw)) return { ok: false, message: 'enabledTypes must be an array' };
-  const enabledTypes = enabledRaw.filter(isNotificationType);
-  if (enabledTypes.length !== enabledRaw.length) {
-    return { ok: false, message: 'enabledTypes contains invalid values' };
-  }
-
-  const dailySummaryEnabled =
-    typeof body.dailySummaryEnabled === 'boolean' ? body.dailySummaryEnabled : true;
-
-  const hour = toInt(body.dailySummaryHour);
-  if (hour == null || hour < 0 || hour > 23) {
-    return { ok: false, message: 'dailySummaryHour must be 0-23' };
-  }
-
-  const followRaw = body.followGroupIds;
-  const followGroupIdsInput =
-    Array.isArray(followRaw) ? followRaw.filter((x) => typeof x === 'string') : [];
-  if (Array.isArray(followRaw) && followGroupIdsInput.length !== followRaw.length) {
-    return { ok: false, message: 'followGroupIds must be string[]' };
-  }
-
-  // ถ้าส่ง groupId มา ต้องเป็น ObjectId string ที่ถูกต้อง (กันข้อมูลขยะ)
-  const invalidGroupId = followGroupIdsInput.find((id) => !mongoose.Types.ObjectId.isValid(id));
-  if (invalidGroupId) return { ok: false, message: `Invalid group id: ${invalidGroupId}` };
-
-  return {
-    ok: true,
-    value: {
-      enabledTypes,
-      dailySummaryEnabled,
-      dailySummaryHour: hour,
-      followGroupIds: uniqStrings(followGroupIdsInput),
-    },
+    enabledTypes: [...ALL_TYPES],
+    dailySummaryEnabled: enabled,
+    dailySummaryHour: hour >= 0 && hour <= 23 ? hour : fallback.dailySummaryHour,
+    followGroupIds: [],
   };
 }
 
@@ -139,20 +76,23 @@ export async function GET(): Promise<NextResponse<ResOk | ResErr>> {
 
   await connectMongoDB();
 
-  const existing = await NotificationSettings.findOne({ userId }).lean();
-  if (!existing) {
-    await NotificationSettings.create({
-      userId,
-      enabledTypes: [...ALL_TYPES],
-      followGroupIds: [],
-      dailySummaryEnabled: true,
-      dailySummaryHour: 9,
-    });
-    const created = await NotificationSettings.findOne({ userId }).lean();
-    return NextResponse.json({ ok: true, settings: normalizeSettingsDocToDTO(created) }, { status: 200 });
-  }
+  await NotificationSettings.updateOne(
+    { userId },
+    {
+      $set: {
+        enabledTypes: [...ALL_TYPES],
+      },
+      $setOnInsert: {
+        dailySummaryEnabled: true,
+        dailySummaryHour: 9,
+        followGroupIds: [],
+      },
+    },
+    { upsert: true }
+  );
 
-  return NextResponse.json({ ok: true, settings: normalizeSettingsDocToDTO(existing) }, { status: 200 });
+  const updated = await NotificationSettings.findOne({ userId }).lean();
+  return NextResponse.json({ ok: true, settings: normalizeSettingsDocToDTO(updated) }, { status: 200 });
 }
 
 export async function PATCH(req: Request): Promise<NextResponse<{ ok: true; message: string } | ResErr>> {
@@ -170,8 +110,33 @@ export async function PATCH(req: Request): Promise<NextResponse<{ ok: true; mess
     return NextResponse.json({ ok: false, message: 'Invalid JSON' }, { status: 400 });
   }
 
-  const parsed = parsePatchBody(body);
-  if (!parsed.ok) return NextResponse.json({ ok: false, message: parsed.message }, { status: 400 });
+  if (!isRecord(body)) {
+    return NextResponse.json({ ok: false, message: 'Invalid JSON body' }, { status: 400 });
+  }
+
+  const hourRaw = body.dailySummaryHour;
+  const hour =
+    typeof hourRaw === 'number' && Number.isFinite(hourRaw)
+      ? Math.trunc(hourRaw)
+      : typeof hourRaw === 'string' && hourRaw.trim() !== '' && Number.isFinite(Number(hourRaw))
+        ? Math.trunc(Number(hourRaw))
+        : Number.NaN;
+
+  const enabledRaw = body.dailySummaryEnabled;
+  const enabled =
+    typeof enabledRaw === 'boolean'
+      ? enabledRaw
+      : typeof enabledRaw === 'string'
+        ? enabledRaw.trim().toLowerCase() === 'true'
+        : null;
+
+  if (!(hour >= 0 && hour <= 23)) {
+    return NextResponse.json({ ok: false, message: 'dailySummaryHour must be 0-23' }, { status: 400 });
+  }
+
+  if (enabled === null) {
+    return NextResponse.json({ ok: false, message: 'dailySummaryEnabled must be boolean' }, { status: 400 });
+  }
 
   await connectMongoDB();
 
@@ -179,15 +144,14 @@ export async function PATCH(req: Request): Promise<NextResponse<{ ok: true; mess
     { userId },
     {
       $set: {
-        enabledTypes: parsed.value.enabledTypes,
-        dailySummaryEnabled: parsed.value.dailySummaryEnabled,
-        dailySummaryHour: parsed.value.dailySummaryHour,
-        // เก็บใน DB เป็น ObjectId[] ตาม schema แต่ส่งออกหน้าเว็บเป็น string[]
-        followGroupIds: parsed.value.followGroupIds.map((id) => new mongoose.Types.ObjectId(id)),
+        enabledTypes: [...ALL_TYPES],
+        dailySummaryEnabled: enabled,
+        dailySummaryHour: hour,
+        followGroupIds: [],
       },
     },
     { upsert: true }
   );
 
-  return NextResponse.json({ ok: true, message: 'Saved' }, { status: 200 });
+  return NextResponse.json({ ok: true, message: 'บันทึกการตั้งค่าสรุปรายวันแล้ว' }, { status: 200 });
 }

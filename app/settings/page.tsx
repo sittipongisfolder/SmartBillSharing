@@ -593,22 +593,9 @@ function AccountInfoCard() {
 
 
 function NotificationsCard() {
-  type NotificationType =
-    | 'BILL_CREATED_OWNER'
-    | 'BILL_ADDED_YOU'
-    | 'BILL_UPDATED'
-    | 'BILL_STATUS_CHANGED'
-    | 'BILL_CLOSED'
-    | 'DAILY_UNPAID_SUMMARY'
-    | 'GROUP_MEMBER_CHANGED'
-    | 'GROUP_UPDATED'
-    | 'FRIEND_REQUEST';
-
   type Settings = {
-    enabledTypes: NotificationType[];
     dailySummaryEnabled: boolean;
     dailySummaryHour: number;
-    followGroupIds: string[];
   };
 
   type GetRes = { ok: true; settings: Settings } | { ok: false; message: string };
@@ -623,13 +610,8 @@ function NotificationsCard() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [msg, setMsg] = useState<{ type: 'ok' | 'err'; text: string } | null>(null);
-
-  const [s, setS] = useState<Settings>({
-    enabledTypes: [],
-    dailySummaryEnabled: true,
-    dailySummaryHour: 9,
-    followGroupIds: [],
-  });
+  const [dailySummaryEnabled, setDailySummaryEnabled] = useState(true);
+  const [dailySummaryHour, setDailySummaryHour] = useState(9);
 
   // ✅ LINE states
   const [lineLoading, setLineLoading] = useState(false);
@@ -643,18 +625,6 @@ function NotificationsCard() {
 
   const [copied, setCopied] = useState(false);
   const [lineQrDataUrl, setLineQrDataUrl] = useState<string | null>(null);
-
-  const TYPES: Array<{ key: NotificationType; label: string; desc: string }> = [
-    { key: 'BILL_CREATED_OWNER', label: 'สร้างบิล (เจ้าของ)', desc: 'คุณสร้างบิลสำเร็จ พร้อมรายละเอียดบิล' },
-    { key: 'BILL_ADDED_YOU', label: 'ถูกเพิ่มเข้าบิล', desc: 'ถูกเพิ่มเข้าบิลใหม่' },
-    { key: 'BILL_UPDATED', label: 'บิลถูกแก้ไข', desc: 'ชื่อบิล/เมนู/ราคา/ยอด/วิธีหาร/สมาชิกถูกแก้ไข' },
-    { key: 'BILL_STATUS_CHANGED', label: 'สถานะการชำระเงินเปลี่ยนแปลง', desc: 'มีคนจ่าย/อัปโหลดสลิป ทำให้สถานะคุณเปลี่ยน' },
-    { key: 'BILL_CLOSED', label: 'บิลปิดแล้ว', desc: 'บิลปิดแล้ว ทุกคนจ่ายครบ' },
-    { key: 'DAILY_UNPAID_SUMMARY', label: 'สรุปยอดค้างรายวัน', desc: 'แจ้งเตือนสรุปยอดค้างทุกวัน + ค้างกี่วัน' },
-    { key: 'GROUP_MEMBER_CHANGED', label: 'สมาชิกกลุ่มเปลี่ยนแปลง', desc: 'เพิ่ม/ลบสมาชิกในกลุ่ม' },
-    { key: 'GROUP_UPDATED', label: 'กลุ่มถูกแก้ไข', desc: 'เปลี่ยนชื่อกลุ่ม/รูปกลุ่ม' },
-    { key: 'FRIEND_REQUEST', label: 'คำขอเป็นเพื่อน', desc: 'มีคนส่งคำขอเป็นเพื่อนมาให้คุณ' },
-  ];
 
   const formatTH = (iso: string) =>
     new Intl.DateTimeFormat('th-TH', { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(iso));
@@ -685,19 +655,21 @@ function NotificationsCard() {
     (async () => {
       try {
         setLoading(true);
+        const [settingsRes] = await Promise.all([
+          fetch('/api/notifications/settings'),
+          loadLineStatus(),
+        ]);
 
-        const res = await fetch('/api/notifications/settings');
-        const data = (await res.json()) as GetRes;
+        const settingsData = (await settingsRes.json()) as GetRes;
 
-        await loadLineStatus();
-        if (!alive) return;
-
-        if (!res.ok || !data.ok) {
-          setMsg({ type: 'err', text: !data.ok ? data.message : 'โหลดไม่สำเร็จ' });
+        if (!settingsRes.ok || !settingsData.ok) {
+          setMsg({ type: 'err', text: !settingsData.ok ? settingsData.message : 'โหลดไม่สำเร็จ' });
           return;
         }
 
-        setS(data.settings);
+        setDailySummaryEnabled(settingsData.settings.dailySummaryEnabled ?? true);
+        setDailySummaryHour(settingsData.settings.dailySummaryHour ?? 9);
+        if (!alive) return;
       } catch {
         if (!alive) return;
         setMsg({ type: 'err', text: 'เชื่อมต่อเซิร์ฟเวอร์ไม่ได้' });
@@ -711,6 +683,31 @@ function NotificationsCard() {
       alive = false;
     };
   }, [loadLineStatus]);
+
+  const saveDailySummarySettings = async () => {
+    setMsg(null);
+    setSaving(true);
+
+    try {
+      const res = await fetch('/api/notifications/settings', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ dailySummaryEnabled, dailySummaryHour }),
+      });
+
+      const data = (await res.json()) as PatchRes;
+      if (!res.ok || !data.ok) {
+        setMsg({ type: 'err', text: data.message || 'บันทึกเวลาไม่สำเร็จ' });
+        return;
+      }
+
+      setMsg({ type: 'ok', text: data.message || 'บันทึกการตั้งค่าสรุปรายวันแล้ว' });
+    } catch {
+      setMsg({ type: 'err', text: 'เชื่อมต่อเซิร์ฟเวอร์ไม่ได้' });
+    } finally {
+      setSaving(false);
+    }
+  };
 
   // ✅ ถ้ามี code และยังไม่ linked: polling เช็คสถานะทุก 4 วิ (พอ user ไปพิมพ์ใน LINE แล้วหน้าเว็บจะอัปเดตเอง)
   useEffect(() => {
@@ -746,36 +743,6 @@ function NotificationsCard() {
       alive = false;
     };
   }, []);
-
-  const toggleType = (t: NotificationType) => {
-    setS((prev) => {
-      const has = prev.enabledTypes.includes(t);
-      return { ...prev, enabledTypes: has ? prev.enabledTypes.filter((x) => x !== t) : [...prev.enabledTypes, t] };
-    });
-  };
-
-  const save = async () => {
-    setMsg(null);
-    setSaving(true);
-    try {
-      const res = await fetch('/api/notifications/settings', {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(s),
-      });
-      const data = (await res.json()) as PatchRes;
-
-      if (!res.ok || !data.ok) {
-        setMsg({ type: 'err', text: data.message || 'บันทึกไม่สำเร็จ' });
-        return;
-      }
-      setMsg({ type: 'ok', text: 'บันทึกการตั้งค่าสำเร็จ' });
-    } catch {
-      setMsg({ type: 'err', text: 'เชื่อมต่อเซิร์ฟเวอร์ไม่ได้' });
-    } finally {
-      setSaving(false);
-    }
-  };
 
   const requestLineCode = async () => {
     setLineLoading(true);
@@ -837,7 +804,7 @@ function NotificationsCard() {
   return (
     <div>
       <div className="font-semibold text-gray-900">การตั้งค่าแจ้งเตือน</div>
-      <p className="text-sm text-gray-500 mt-1">เลือกเปิด/ปิดประเภทการแจ้งเตือน และตั้งเวลาแจ้งสรุปยอดค้าง</p>
+      <p className="text-sm text-gray-500 mt-1">ระบบเปิดแจ้งเตือนทั่วไปให้อัตโนมัติ และให้คุณเปิด/ปิดสรุปรายวันพร้อมเลือกเวลาได้</p>
 
       {loading ? (
         <div className="mt-5 text-sm text-gray-500">Loading...</div>
@@ -961,67 +928,72 @@ function NotificationsCard() {
             )}
           </div>
 
-          {/* Daily summary */}
-          <div className="rounded-xl border border-black/5 bg-gray-50 p-4">
-            <div className="flex items-center justify-between">
-              <div>
-                <div className="text-sm font-semibold text-gray-900">สรุปยอดค้างรายวัน</div>
-                <div className="text-xs text-gray-500 mt-1">แจ้งทุกวันเป็นสรุป: ค้าง X บิล / ยอดรวม X บาท / ค้างกี่วัน</div>
-              </div>
+          <div className="rounded-xl border border-black/5 bg-gray-50 p-4 text-sm text-gray-700">
+            <div className="font-semibold text-gray-900">สถานะการแจ้งเตือน</div>
+            <p className="mt-1">การแจ้งเตือนทั่วไปเปิดแบบถาวร ส่วนสรุปยอดค้างรายวันสามารถเปิดหรือปิดได้</p>
+            <p className="mt-1 text-xs text-gray-500">เวลาที่ตั้งด้านล่างอิงเวลาไทย (Asia/Bangkok, UTC+7) ไม่ใช่ UTC</p>
 
+            <div className="mt-4 flex items-center gap-3">
+              <label className="text-xs text-gray-600 font-semibold">สรุปรายวัน</label>
               <button
                 type="button"
-                onClick={() => setS((p) => ({ ...p, dailySummaryEnabled: !p.dailySummaryEnabled }))}
+                onClick={() => setDailySummaryEnabled((prev) => !prev)}
+                role="switch"
+                aria-checked={dailySummaryEnabled}
+                aria-label="เปิดหรือปิดสรุปรายวัน"
                 className={[
-                  'h-6 w-11 rounded-full relative transition',
-                  s.dailySummaryEnabled ? 'bg-[#fb8c00]' : 'bg-gray-300',
+                  'relative inline-flex h-7 w-12 items-center rounded-full border transition-colors duration-200',
+                  dailySummaryEnabled
+                    ? 'bg-orange-400 border-orange-400'
+                    : 'bg-gray-300 border-gray-300',
                 ].join(' ')}
               >
                 <span
                   className={[
-                    'absolute top-0.5 h-5 w-5 rounded-full bg-white transition',
-                    s.dailySummaryEnabled ? 'left-5' : 'left-0.5',
+                    'inline-block h-5 w-5 transform rounded-full bg-white shadow-sm transition-transform duration-200',
+                    dailySummaryEnabled ? 'translate-x-6' : 'translate-x-1',
                   ].join(' ')}
                 />
               </button>
+              <span className={dailySummaryEnabled ? 'text-xs font-semibold text-orange-700' : 'text-xs font-semibold text-gray-500'}>
+                {dailySummaryEnabled ? 'เปิด' : 'ปิด'}
+              </span>
             </div>
 
             <div className="mt-4 flex items-center gap-3">
-              <label className="text-xs text-gray-600 font-semibold">เวลาแจ้ง (ชั่วโมง)</label>
+              <label className="text-xs text-gray-600 font-semibold">เวลาแจ้งสรุปรายวัน (เวลาไทย)</label>
               <select
                 className="px-3 py-2 rounded-xl border border-gray-200 bg-white text-sm text-black"
-                value={s.dailySummaryHour}
-                onChange={(e) => setS((p) => ({ ...p, dailySummaryHour: Number(e.target.value) }))}
-                disabled={!s.dailySummaryEnabled}
+                value={dailySummaryHour}
+                onChange={(e) => setDailySummaryHour(Number(e.target.value))}
+                disabled={!dailySummaryEnabled}
               >
                 {Array.from({ length: 24 }).map((_, h) => (
                   <option key={h} value={h}>
-                    {String(h).padStart(2, '0')}:00
+                    {String(h).padStart(2, '0')}:00 (ICT)
                   </option>
                 ))}
               </select>
-            </div>
-          </div>
 
-          {/* Type toggles */}
-          <div className="rounded-xl border border-black/5 bg-white">
-            {TYPES.map((t) => {
-              const on = s.enabledTypes.includes(t.key);
-              return (
-                <button
-                  key={t.key}
-                  type="button"
-                  onClick={() => toggleType(t.key)}
-                  className="w-full px-4 py-4 flex items-center justify-between hover:bg-gray-50 border-b last:border-b-0 border-black/5"
-                >
-                  <div className="text-left">
-                    <div className="text-sm font-semibold text-gray-900">{t.label}</div>
-                    <div className="text-xs text-gray-500 mt-1">{t.desc}</div>
-                  </div>
-                  <span className={on ? 'text-[#fb8c00] font-bold' : 'text-gray-400 font-semibold'}>{on ? 'เปิด' : 'ปิด'}</span>
-                </button>
-              );
-            })}
+              <button
+                type="button"
+                onClick={saveDailySummarySettings}
+                disabled={saving}
+                className={[
+                  'px-4 py-2 rounded-xl font-semibold text-white transition',
+                  'bg-[linear-gradient(135deg,#fb8c00_0%,#e65100_100%)]',
+                  saving ? 'opacity-60 cursor-not-allowed' : 'hover:brightness-110',
+                ].join(' ')}
+              >
+                {saving ? 'กำลังบันทึก...' : 'บันทึกเวลา'}
+              </button>
+            </div>
+
+            <p className="mt-3 text-xs text-gray-500">
+              {dailySummaryEnabled
+                ? `ตอนนี้ระบบจะส่งสรุปรายวันที่เวลา ${String(dailySummaryHour).padStart(2, '0')}:00 น. (UTC+7)`
+                : 'ตอนนี้ระบบปิดการส่งสรุปรายวันอยู่'}
+            </p>
           </div>
 
           {msg && (
@@ -1037,19 +1009,6 @@ function NotificationsCard() {
             </div>
           )}
 
-          <button
-            type="button"
-            onClick={save}
-            disabled={saving}
-            className={[
-              'w-full sm:w-auto px-6 py-3 rounded-xl font-bold text-white transition',
-              'bg-[linear-gradient(135deg,#fb8c00_0%,#e65100_100%)]',
-              'shadow-lg shadow-orange-200 hover:shadow-orange-300 hover:-translate-y-0.5 active:scale-[0.98]',
-              saving ? 'opacity-60 cursor-not-allowed hover:translate-y-0' : '',
-            ].join(' ')}
-          >
-            {saving ? 'กำลังบันทึก...' : 'บันทึกการตั้งค่า'}
-          </button>
         </div>
       )}
     </div>

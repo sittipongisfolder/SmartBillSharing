@@ -408,7 +408,7 @@ function FriendsPageInner() {
                   placeholder="ค้นหาชื่อหรือ Email..."
                   value={searchQuery}
                   onChange={(e) => setSearchQuery(e.target.value)}
-                  className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:border-[#fb8c00] focus:outline-none focus:ring-1 focus:ring-[#fb8c00]"
+                  className="w-full px-4 py-3 border text-black border-gray-300 rounded-lg focus:border-[#fb8c00] focus:outline-none focus:ring-1 focus:ring-[#fb8c00]"
                 />
               </div>
 
