@@ -477,6 +477,14 @@ export default function PaySlipClient({ billId, forcedGuestAccessToken }: { bill
     }
   }
 
+  function handleClearSelectedFile() {
+    setFile(null);
+    setResult(null);
+    if (fileInputRef.current) {
+      fileInputRef.current.value = '';
+    }
+  }
+
   return (
     <div className="min-h-screen bg-[radial-gradient(circle_at_top_right,#fff5e6_0%,#ffffff_40%,#fff0e0_100%)]">
       {/* Header */}
@@ -701,14 +709,33 @@ export default function PaySlipClient({ billId, forcedGuestAccessToken }: { bill
           </div>
 
           <div className="p-4 sm:p-5">
-            <div className="rounded-2xl border bg-gray-50 overflow-hidden">
+            <div className="relative rounded-2xl border bg-gray-50 overflow-hidden">
               {previewUrl ? (
-                // eslint-disable-next-line @next/next/no-img-element
-                <img
-                  src={previewUrl}
-                  alt="ตัวอย่างสลิป"
-                  className="w-full h-56 sm:h-[520px] object-contain"
-                />
+                <>
+                  <button
+                    type="button"
+                    onClick={handleClearSelectedFile}
+                    disabled={loading || redirectIn !== null}
+                    aria-label="ลบรูปที่เลือก"
+                    className={cx(
+                      'absolute right-3 top-3 z-10 inline-flex h-8 w-8 items-center justify-center rounded-full border border-white/60 bg-black/30 text-white backdrop-blur-sm transition',
+                      loading || redirectIn !== null
+                        ? 'cursor-not-allowed opacity-50'
+                        : 'hover:bg-black/45 active:scale-95'
+                    )}
+                  >
+                    <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
+                      <path fillRule="evenodd" d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z" clipRule="evenodd" />
+                    </svg>
+                  </button>
+
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img
+                    src={previewUrl}
+                    alt="ตัวอย่างสลิป"
+                    className="w-full h-56 sm:h-[520px] object-contain"
+                  />
+                </>
               ) : (
                 <button
                   type="button"
