@@ -138,10 +138,10 @@ async function ensureSettings(userId: mongoose.Types.ObjectId) {
     {
       $set: {
         enabledTypes: DEFAULT_TYPES,
+        dailySummaryHour: 16,
       },
       $setOnInsert: {
         dailySummaryEnabled: true,
-        dailySummaryHour: 9,
       },
     },
     { upsert: true }

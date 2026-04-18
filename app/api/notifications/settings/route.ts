@@ -22,6 +22,8 @@ const ALL_TYPES = [
   'FRIEND_REQUEST',
 ] as const satisfies readonly NotificationType[];
 
+const DAILY_SUMMARY_HOUR_TH = 16;
+
 type SettingsDTO = {
   enabledTypes: NotificationType[];
   dailySummaryEnabled: boolean;
@@ -45,23 +47,17 @@ function normalizeSettingsDocToDTO(doc: unknown): SettingsDTO {
   const fallback: SettingsDTO = {
     enabledTypes: [...ALL_TYPES],
     dailySummaryEnabled: true,
-    dailySummaryHour: 9,
+    dailySummaryHour: DAILY_SUMMARY_HOUR_TH,
     followGroupIds: [],
   };
   if (!isRecord(doc)) return fallback;
-
-  const hourRaw = doc.dailySummaryHour;
-  const hour =
-    typeof hourRaw === 'number' && Number.isFinite(hourRaw)
-      ? Math.trunc(hourRaw)
-      : Number.NaN;
   const enabledRaw = doc.dailySummaryEnabled;
   const enabled = typeof enabledRaw === 'boolean' ? enabledRaw : fallback.dailySummaryEnabled;
 
   return {
     enabledTypes: [...ALL_TYPES],
     dailySummaryEnabled: enabled,
-    dailySummaryHour: hour >= 0 && hour <= 23 ? hour : fallback.dailySummaryHour,
+    dailySummaryHour: DAILY_SUMMARY_HOUR_TH,
     followGroupIds: [],
   };
 }
@@ -81,10 +77,10 @@ export async function GET(): Promise<NextResponse<ResOk | ResErr>> {
     {
       $set: {
         enabledTypes: [...ALL_TYPES],
+        dailySummaryHour: DAILY_SUMMARY_HOUR_TH,
       },
       $setOnInsert: {
         dailySummaryEnabled: true,
-        dailySummaryHour: 9,
         followGroupIds: [],
       },
     },
@@ -114,14 +110,6 @@ export async function PATCH(req: Request): Promise<NextResponse<{ ok: true; mess
     return NextResponse.json({ ok: false, message: 'Invalid JSON body' }, { status: 400 });
   }
 
-  const hourRaw = body.dailySummaryHour;
-  const hour =
-    typeof hourRaw === 'number' && Number.isFinite(hourRaw)
-      ? Math.trunc(hourRaw)
-      : typeof hourRaw === 'string' && hourRaw.trim() !== '' && Number.isFinite(Number(hourRaw))
-        ? Math.trunc(Number(hourRaw))
-        : Number.NaN;
-
   const enabledRaw = body.dailySummaryEnabled;
   const enabled =
     typeof enabledRaw === 'boolean'
@@ -129,10 +117,6 @@ export async function PATCH(req: Request): Promise<NextResponse<{ ok: true; mess
       : typeof enabledRaw === 'string'
         ? enabledRaw.trim().toLowerCase() === 'true'
         : null;
-
-  if (!(hour >= 0 && hour <= 23)) {
-    return NextResponse.json({ ok: false, message: 'dailySummaryHour must be 0-23' }, { status: 400 });
-  }
 
   if (enabled === null) {
     return NextResponse.json({ ok: false, message: 'dailySummaryEnabled must be boolean' }, { status: 400 });
@@ -146,7 +130,7 @@ export async function PATCH(req: Request): Promise<NextResponse<{ ok: true; mess
       $set: {
         enabledTypes: [...ALL_TYPES],
         dailySummaryEnabled: enabled,
-        dailySummaryHour: hour,
+        dailySummaryHour: DAILY_SUMMARY_HOUR_TH,
         followGroupIds: [],
       },
     },

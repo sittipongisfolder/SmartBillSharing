@@ -9,7 +9,7 @@ export interface INotificationSettings extends mongoose.Document {
 
   // สรุปค้างรายวัน
   dailySummaryEnabled: boolean;
-  dailySummaryHour: number; // 0-23 (ชั่วโมงตาม Asia/Bangkok)
+  dailySummaryHour: number; // 16:00 ตาม Asia/Bangkok แบบคงที่
   lastDailySummaryAt?: Date; // กันส่งซ้ำวันเดียวกัน
 }
 
@@ -21,7 +21,7 @@ const settingsSchema = new Schema<INotificationSettings>(
     followGroupIds: { type: [Schema.Types.ObjectId], ref: 'Group', default: [] },
 
     dailySummaryEnabled: { type: Boolean, default: true },
-    dailySummaryHour: { type: Number, default: 9 }, // ค่าเริ่มต้น 9 โมง (เวลาไทย)
+    dailySummaryHour: { type: Number, default: 16 }, // ค่าเริ่มต้น 16:00 (เวลาไทย)
     lastDailySummaryAt: { type: Date },
   },
   { timestamps: true }

@@ -14,6 +14,7 @@ type Res = { ok: boolean; message: string; processed?: number };
 
 const BANGKOK_TZ = 'Asia/Bangkok';
 const BANGKOK_UTC_OFFSET_HOURS = 7;
+const DAILY_SUMMARY_HOUR_TH = 16;
 
 const dateKeyTH = (d: Date) => {
   const parts = new Intl.DateTimeFormat('en-CA', {
@@ -28,11 +29,6 @@ const dateKeyTH = (d: Date) => {
   const day = parts.find((p) => p.type === 'day')?.value ?? '00';
   return `${y}-${m}-${day}`;
 };
-
-const hourTH = (d: Date) =>
-  Number(
-    new Intl.DateTimeFormat('en-US', { timeZone: BANGKOK_TZ, hour: '2-digit', hour12: false }).format(d)
-  );
 
 const bangkokDayUtcRange = (d: Date) => {
   const [y, m, day] = dateKeyTH(d).split('-').map((v) => Number(v));
@@ -68,16 +64,14 @@ export async function GET(req: Request) {
 
   const now = new Date();
   const today = dateKeyTH(now);
-  const h = hourTH(now);
   const { startUtc: bangkokDayStartUtc, endUtc: bangkokDayEndUtc } = bangkokDayUtcRange(now);
 
   const settingsList = await NotificationSettings.find({})
-    .select('userId dailySummaryEnabled dailySummaryHour lastDailySummaryAt')
+    .select('userId dailySummaryEnabled lastDailySummaryAt')
     .lean();
 
   let processed = 0;
   let scannedUsers = 0;
-  let skippedBeforeHour = 0;
   let skippedDisabled = 0;
   let skippedAlreadySentToday = 0;
   let skippedNoUnpaid = 0;
@@ -91,15 +85,6 @@ export async function GET(req: Request) {
 
     if (s.dailySummaryEnabled === false) {
       skippedDisabled += 1;
-      continue;
-    }
-
-    const hour =
-      typeof s.dailySummaryHour === 'number' && Number.isFinite(s.dailySummaryHour)
-        ? Math.min(23, Math.max(0, Math.trunc(s.dailySummaryHour)))
-        : 9;
-    if (h < hour) {
-      skippedBeforeHour += 1;
       continue;
     }
 
@@ -193,7 +178,6 @@ export async function GET(req: Request) {
     message: 'done',
     processed,
     scannedUsers,
-    skippedBeforeHour,
     skippedDisabled,
     skippedAlreadySentToday,
     skippedNoUnpaid,
@@ -201,5 +185,6 @@ export async function GET(req: Request) {
     lineDelivered,
     lineSkippedNotLinked,
     linePushFailed,
+    fixedDailySummaryHourTH: DAILY_SUMMARY_HOUR_TH,
   });
 }

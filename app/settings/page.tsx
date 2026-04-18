@@ -595,7 +595,6 @@ function AccountInfoCard() {
 function NotificationsCard() {
   type Settings = {
     dailySummaryEnabled: boolean;
-    dailySummaryHour: number;
   };
 
   type GetRes = { ok: true; settings: Settings } | { ok: false; message: string };
@@ -611,7 +610,6 @@ function NotificationsCard() {
   const [saving, setSaving] = useState(false);
   const [msg, setMsg] = useState<{ type: 'ok' | 'err'; text: string } | null>(null);
   const [dailySummaryEnabled, setDailySummaryEnabled] = useState(true);
-  const [dailySummaryHour, setDailySummaryHour] = useState(9);
 
   // ✅ LINE states
   const [lineLoading, setLineLoading] = useState(false);
@@ -668,7 +666,6 @@ function NotificationsCard() {
         }
 
         setDailySummaryEnabled(settingsData.settings.dailySummaryEnabled ?? true);
-        setDailySummaryHour(settingsData.settings.dailySummaryHour ?? 9);
         if (!alive) return;
       } catch {
         if (!alive) return;
@@ -692,7 +689,7 @@ function NotificationsCard() {
       const res = await fetch('/api/notifications/settings', {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ dailySummaryEnabled, dailySummaryHour }),
+        body: JSON.stringify({ dailySummaryEnabled }),
       });
 
       const data = (await res.json()) as PatchRes;
@@ -804,7 +801,7 @@ function NotificationsCard() {
   return (
     <div>
       <div className="font-semibold text-gray-900">การตั้งค่าแจ้งเตือน</div>
-      <p className="text-sm text-gray-500 mt-1">ระบบเปิดแจ้งเตือนทั่วไปให้อัตโนมัติ และให้คุณเปิด/ปิดสรุปรายวันพร้อมเลือกเวลาได้</p>
+      <p className="text-sm text-gray-500 mt-1">ระบบเปิดแจ้งเตือนทั่วไปให้อัตโนมัติ และให้คุณเปิดหรือปิดสรุปรายวันได้</p>
 
       {loading ? (
         <div className="mt-5 text-sm text-gray-500">Loading...</div>
@@ -931,7 +928,7 @@ function NotificationsCard() {
           <div className="rounded-xl border border-black/5 bg-gray-50 p-4 text-sm text-gray-700">
             <div className="font-semibold text-gray-900">สถานะการแจ้งเตือน</div>
             <p className="mt-1">การแจ้งเตือนทั่วไปเปิดแบบถาวร ส่วนสรุปยอดค้างรายวันสามารถเปิดหรือปิดได้</p>
-            <p className="mt-1 text-xs text-gray-500">เวลาที่ตั้งด้านล่างอิงเวลาไทย (Asia/Bangkok, UTC+7) ไม่ใช่ UTC</p>
+            <p className="mt-1 text-xs text-gray-500">ระบบจะส่งสรุปรายวันทุกวันเวลา 16:00 น. ตามเวลาไทย (Asia/Bangkok, UTC+7)</p>
 
             <div className="mt-4 flex items-center gap-3">
               <label className="text-xs text-gray-600 font-semibold">สรุปรายวัน</label>
@@ -960,21 +957,7 @@ function NotificationsCard() {
               </span>
             </div>
 
-            <div className="mt-4 flex items-center gap-3">
-              <label className="text-xs text-gray-600 font-semibold">เวลาแจ้งสรุปรายวัน (เวลาไทย)</label>
-              <select
-                className="px-3 py-2 rounded-xl border border-gray-200 bg-white text-sm text-black"
-                value={dailySummaryHour}
-                onChange={(e) => setDailySummaryHour(Number(e.target.value))}
-                disabled={!dailySummaryEnabled}
-              >
-                {Array.from({ length: 24 }).map((_, h) => (
-                  <option key={h} value={h}>
-                    {String(h).padStart(2, '0')}:00 (ICT)
-                  </option>
-                ))}
-              </select>
-
+            <div className="mt-4">
               <button
                 type="button"
                 onClick={saveDailySummarySettings}
@@ -985,13 +968,13 @@ function NotificationsCard() {
                   saving ? 'opacity-60 cursor-not-allowed' : 'hover:brightness-110',
                 ].join(' ')}
               >
-                {saving ? 'กำลังบันทึก...' : 'บันทึกเวลา'}
+                {saving ? 'กำลังบันทึก...' : 'บันทึกการตั้งค่า'}
               </button>
             </div>
 
             <p className="mt-3 text-xs text-gray-500">
               {dailySummaryEnabled
-                ? `ตอนนี้ระบบจะส่งสรุปรายวันที่เวลา ${String(dailySummaryHour).padStart(2, '0')}:00 น. (UTC+7)`
+                ? 'ตอนนี้ระบบจะส่งสรุปรายวันเวลา 16:00 น. ของทุกวัน'
                 : 'ตอนนี้ระบบปิดการส่งสรุปรายวันอยู่'}
             </p>
           </div>
