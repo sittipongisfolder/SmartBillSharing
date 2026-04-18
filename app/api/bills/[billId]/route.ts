@@ -34,6 +34,15 @@ type ParticipantDoc = {
   paidAt?: Date;
 };
 
+type BillItemDoc = {
+  items: string;
+  price: number;
+  qty?: number;
+  unitPrice?: number;
+  splitMode?: "equal" | "single" | "shared";
+  assignedParticipantIds?: string[];
+};
+
 type UpdateBillBody = {
   title?: string;
   description?: string;
@@ -300,15 +309,36 @@ export async function PATCH(
       ""
     ).trim();
 
+    const prevItemsRaw =
+      (billDoc.items as unknown as BillItemDoc[]) ?? [];
+
     const rawItems = Array.isArray(body.items)
       ? body.items
       : (billDoc.items as Array<{ items: string; price: number }>);
 
+    const effectiveSplitType =
+      (body.splitType ?? (billDoc.splitType as unknown as SplitType)) as SplitType;
+
     const cleanedItems = rawItems
-      .map((it) => ({
-        items: (it.items || "").trim(),
-        price: Number(it.price) || 0,
-      }))
+      .map((it, idx) => {
+        const base = {
+          items: (it.items || "").trim(),
+          price: Number(it.price) || 0,
+        };
+
+        if (effectiveSplitType !== "personal") {
+          return base;
+        }
+
+        const old = prevItemsRaw[idx];
+        if (!old) return base;
+
+        return {
+          ...old,
+          items: base.items,
+          price: base.price,
+        };
+      })
       .filter((it) => it.items.length > 0 && it.price > 0);
 
     if (cleanedItems.length === 0) {
@@ -353,6 +383,9 @@ export async function PATCH(
     if (hasGuestParticipants) {
       warning =
         "บิลนี้มี guest/guest placeholder อยู่แล้ว ระบบจึงอัปเดตได้เฉพาะรายละเอียดบิล และจะไม่แก้ participants เพื่อป้องกันข้อมูลสลิปหาย";
+    } else if (effectiveSplitType === "personal") {
+      warning =
+        "บิลประเภท personal จะคง participants เดิมจากการแมปรายการอาหาร และจะไม่แก้ผู้ร่วมบิลจากหน้านี้";
     } else {
       if (!Array.isArray(body.participants) || body.participants.length === 0) {
         return NextResponse.json(

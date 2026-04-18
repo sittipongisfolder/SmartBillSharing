@@ -458,33 +458,29 @@ function CreatePercentPageInner() {
             ? parsed.raw_text.trim()
             : '';
 
-        // ✅ Create image preview from file
-        const reader = new FileReader();
-        reader.onload = (evt) => {
-          const imagePreviewUrl = evt.target?.result as string | null;
-          setSelectedImagePreview(imagePreviewUrl);
+        // ✅ Create preview URL without base64 conversion for faster UI response
+        const imagePreviewUrl = URL.createObjectURL(compressed);
+        setSelectedImagePreview(imagePreviewUrl);
 
-          // ✅ Map OCR items
-          const mappedItems = Array.isArray(parsed.items) ? parsed.items : [];
+        // ✅ Map OCR items
+        const mappedItems = Array.isArray(parsed.items) ? parsed.items : [];
 
-          // ✅ Open preview modal with all data
-          ocrPreview.openPreview(
-            {
-              title: parsed.title,
-              items: mappedItems,
-              total: parsed.total,
-              rawText,
-              receiptImageUrl: null,
-              receiptImagePublicId: null,
-            },
-            picked.name,
-            imagePreviewUrl
-          );
+        // ✅ Open preview modal with all data
+        ocrPreview.openPreview(
+          {
+            title: parsed.title,
+            items: mappedItems,
+            total: parsed.total,
+            rawText,
+            receiptImageUrl: null,
+            receiptImagePublicId: null,
+          },
+          picked.name,
+          imagePreviewUrl
+        );
 
-          // ✅ Store the file for later upload if user accepts
-          setOcrImageFile(compressed);
-        };
-        reader.readAsDataURL(compressed);
+        // ✅ Store the file for later upload if user accepts
+        setOcrImageFile(compressed);
       } finally {
         clearTimeout(timeoutId);
       }

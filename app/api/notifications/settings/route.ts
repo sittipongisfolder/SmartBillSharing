@@ -17,8 +17,6 @@ const ALL_TYPES = [
   'BILL_STATUS_CHANGED',
   'BILL_CLOSED',
   'DAILY_UNPAID_SUMMARY',
-  'GROUP_MEMBER_CHANGED',
-  'GROUP_UPDATED',
   'FRIEND_REQUEST',
 ] as const satisfies readonly NotificationType[];
 

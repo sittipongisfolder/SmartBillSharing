@@ -507,6 +507,7 @@ function EditBillModal({
 
   const ownerId = bill ? normalizeId(bill.createdBy) ?? '' : '';
   const isEqualSplit = bill ? String(bill.splitType) === 'equal' : false;
+  const isPersonalSplit = bill ? String(bill.splitType) === 'personal' : false;
   const hasGuestParticipants = !!bill?.participants.some(
     (p) =>
       p.kind === 'guest' ||
@@ -549,7 +550,7 @@ function EditBillModal({
           title: cleaned.title,
           description: cleaned.description,
           items: cleaned.items,
-          participants: cleaned.participants,
+          ...(isPersonalSplit ? {} : { participants: cleaned.participants }),
           totalPrice: cleaned.items.reduce((sum, it) => sum + it.price, 0),
         }),
       });
@@ -657,7 +658,7 @@ function EditBillModal({
             <div className="flex items-center justify-between mb-3">
               <div className="font-semibold text-gray-800">Participants</div>
 
-              {!hasGuestParticipants ? (
+              {!hasGuestParticipants && !isPersonalSplit ? (
                 <button
                   type="button"
                   onClick={() =>
@@ -678,6 +679,11 @@ function EditBillModal({
                 บิลนี้มี guest/guest placeholder อยู่แล้ว ระบบจะอนุญาตให้แก้ได้เฉพาะ
                 ชื่อบิล รายการอาหาร คำอธิบาย และยอดรวม โดยจะไม่แก้รายชื่อผู้ร่วมบิลจากหน้านี้
                 เพื่อป้องกันข้อมูลสลิปและสถานะการจ่ายหาย
+              </div>
+            ) : isPersonalSplit ? (
+              <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
+                บิลประเภท personal จะคงผู้ร่วมบิลตามการแมปรายการอาหารเดิม และไม่แก้ participants จากหน้านี้
+                เพื่อป้องกันยอดของแต่ละคนเพี้ยนจากหมวดการหาร
               </div>
             ) : (
               <div className="space-y-3">

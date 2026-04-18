@@ -332,30 +332,69 @@ export async function notifyBillUpdated(params: { billId: ObjectIdLike; actorUse
   if (!bill) return;
 
   const hint = (params.hint ?? '').trim();
-  const msgWeb = hint ? `บิล "${bill.title}" มีการแก้ไข: ${hint}` : `บิล "${bill.title}" มีการแก้ไขรายละเอียด`;
+  const actor = await User.findById(actorId).select('name email').lean();
+  const actorName =
+    (actor as { name?: string; email?: string } | null)?.name?.trim() ||
+    (actor as { name?: string; email?: string } | null)?.email?.trim() ||
+    'ผู้ใช้';
 
+  const ownerIdStr = bill.createdBy ? String(bill.createdBy) : '';
+  const actorIdStr = String(actorId);
+
+  const recipientIdSet = new Set<string>();
   for (const p of bill.participants) {
     if (!p.userId) continue;
-    if (String(p.userId) === String(actorId)) continue;
+    recipientIdSet.add(String(p.userId));
+  }
+  if (ownerIdStr) recipientIdSet.add(ownerIdStr);
+  recipientIdSet.add(actorIdStr);
 
-    const uid = p.userId;
+  for (const uidStr of recipientIdSet) {
+    const uid = toId(uidStr);
     if (!(await isEnabled(uid, 'BILL_UPDATED'))) continue;
+
+    const isActor = uidStr === actorIdStr;
+    const isOwner = ownerIdStr !== '' && uidStr === ownerIdStr;
+
+    const title = isActor
+      ? 'คุณแก้ไขบิลแล้ว'
+      : isOwner
+        ? 'บิลของคุณมีการแก้ไข'
+        : 'บิลมีการแก้ไข';
+
+    const message = isActor
+      ? hint
+        ? `คุณแก้ไขบิล "${bill.title}": ${hint}`
+        : `คุณแก้ไขบิล "${bill.title}"`
+      : isOwner
+        ? hint
+          ? `${actorName} แก้ไขบิล "${bill.title}": ${hint}`
+          : `${actorName} แก้ไขบิล "${bill.title}"`
+        : hint
+          ? `บิล "${bill.title}" มีการแก้ไข: ${hint}`
+          : `บิล "${bill.title}" มีการแก้ไขรายละเอียด`;
 
     const created = await createOnce({
       userId: uid,
       type: 'BILL_UPDATED',
-      title: 'บิลมีการแก้ไข',
-      message: msgWeb,
+      title,
+      message,
       billId,
-      dedupe:false,
+      dedupe: false,
     });
 
     if (created) {
-      const { detail } = buildLineBillDetail(bill, uid);
+      const lineHeading = isActor
+        ? '✏️ คุณแก้ไขบิลนี้แล้ว'
+        : isOwner
+          ? `✏️ บิลของคุณถูกแก้ไขโดย ${actorName}`
+          : '✏️ บิลถูกแก้ไข';
+
+      const detail = isOwner ? buildLineOwnerDetail(bill).detail : buildLineBillDetail(bill, uid).detail;
 
       await pushToUserLine(
-        uid.toString(),
-        `✏️ บิลถูกแก้ไข\n${hint ? `รายละเอียด: ${hint}\n` : ''}\n${detail}\n\nเปิดบิลนี้: ${historyBillUrl(billId)}`
+        uidStr,
+        `${lineHeading}\n${hint ? `รายละเอียด: ${hint}\n` : ''}\n${detail}\n\nเปิดบิลนี้: ${historyBillUrl(billId)}`
       );
     }
   }

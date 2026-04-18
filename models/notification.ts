@@ -7,8 +7,6 @@ export type NotificationType =
   | 'BILL_STATUS_CHANGED'
   | 'BILL_CLOSED'
   | 'DAILY_UNPAID_SUMMARY'
-  | 'GROUP_MEMBER_CHANGED'
-  | 'GROUP_UPDATED'
   | 'FRIEND_REQUEST';
 
 export type FriendRequestStatus = 'pending' | 'accepted' | 'rejected';
