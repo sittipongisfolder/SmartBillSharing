@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import mongoose from "mongoose";
 import { getServerSession, DefaultUser } from "next-auth";
 import { authOptions } from "@/lib/authOptions";
 import Bill from "@/models/bill";
@@ -15,7 +16,12 @@ interface SessionUserWithId extends DefaultUser {
 
 interface CreateBillBody {
   title: string;
-  items: Array<{ items: string; price: number | string }>;
+  items: Array<{
+    items: string;
+    price: number | string;
+    splitMode?: "equal" | "single" | "shared";
+    assignedParticipantKeys?: string[];
+  }>;
   totalPrice?: number | string;
   splitType: SplitType;
   participants: Array<{
@@ -164,25 +170,12 @@ export async function POST(req: NextRequest) {
         { status: 400 },
       );
 
-    const cleanedItems = (Array.isArray(items) ? items : [])
-      .map((it) => ({
-        items: (it.items || "").trim(),
-        price: Number(it.price) || 0,
-      }))
-      .filter((it) => it.items.length > 0 && it.price > 0);
-
-    if (cleanedItems.length === 0) {
-      return NextResponse.json(
-        { error: "items must have at least 1 row (items+price)" },
-        { status: 400 },
-      );
-    }
-
     const cleanedParticipants = (Array.isArray(participants) ? participants : [])
       .filter((p) => p.userId && p.name)
       .map((p) => {
         const isOwner = String(p.userId) === String(userId);
         return {
+          _id: new mongoose.Types.ObjectId(),
           userId: p.userId,
           name: p.name,
           amount: Number(p.amount) || 0,
@@ -193,6 +186,53 @@ export async function POST(req: NextRequest) {
     if (cleanedParticipants.length === 0) {
       return NextResponse.json(
         { error: "participants is required" },
+        { status: 400 },
+      );
+    }
+
+    // Build userId → participant._id map for resolving assignedParticipantIds
+    const userIdToParticipantId = new Map<string, string>();
+    for (const p of cleanedParticipants) {
+      userIdToParticipantId.set(String(p.userId), String(p._id));
+    }
+
+    const cleanedItems = (Array.isArray(items) ? items : [])
+      .map((it) => {
+        const name = (it.items || "").trim();
+        const price = Number(it.price) || 0;
+        if (!name || !(price > 0)) return null;
+
+        const splitModeRaw = it.splitMode;
+        const splitMode: "equal" | "single" | "shared" =
+          splitModeRaw === "single" || splitModeRaw === "shared"
+            ? splitModeRaw
+            : "equal";
+
+        const rawKeys = Array.isArray(it.assignedParticipantKeys)
+          ? it.assignedParticipantKeys
+          : [];
+        const assignedParticipantIds = rawKeys
+          .map((key) => {
+            if (key.startsWith("user:"))
+              return userIdToParticipantId.get(key.slice(5)) ?? null;
+            return null;
+          })
+          .filter((id): id is string => id !== null);
+
+        return { items: name, price, splitMode, assignedParticipantIds };
+      })
+      .filter(
+        (it): it is {
+          items: string;
+          price: number;
+          splitMode: "equal" | "single" | "shared";
+          assignedParticipantIds: string[];
+        } => it !== null,
+      );
+
+    if (cleanedItems.length === 0) {
+      return NextResponse.json(
+        { error: "items must have at least 1 row (items+price)" },
         { status: 400 },
       );
     }

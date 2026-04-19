@@ -1266,19 +1266,45 @@ function CreateBillPersonalPageInner() {
         return;
       }
 
+      const getParticipantKey = (localId: string): string | null => {
+        const p = selectedParticipants.find((sp) => sp.localId === localId);
+        if (!p) return null;
+        if (p.kind === 'user' && p.userId) return `user:${p.userId}`;
+        if (p.kind === 'guest' && p.guestId) return `guest:${p.guestId}`;
+        if (p.kind === 'guest_placeholder') return `placeholder:${p.name.toLowerCase()}`;
+        return null;
+      };
+
       const cleanedItems = calc.lineTotals
         .map((it) => {
           const name = it.items.trim();
           if (!name) return null;
 
+          const isShared = it.ownerId === '__shared__';
+          const sharedWithIds = isShared ? (it.sharedWith || []) : [];
+
           const tag =
-            it.ownerId === '__shared__'
+            isShared
               ? `[Shared:${formatSharedNames(it.sharedWith || [])}]`
               : it.ownerId
                 ? `[${selectedParticipants.find((p) => p.localId === it.ownerId)?.name || 'Owner'}]`
                 : '';
 
           const displayName = `${tag} ${name}`.trim();
+
+          const assignedParticipantKeys: string[] = isShared
+            ? sharedWithIds
+                .map((id) => getParticipantKey(id))
+                .filter((k): k is string => k !== null)
+            : it.ownerId
+              ? [getParticipantKey(it.ownerId)].filter((k): k is string => k !== null)
+              : [];
+
+          const splitMode: 'single' | 'shared' | 'equal' = isShared
+            ? 'shared'
+            : it.ownerId
+              ? 'single'
+              : 'equal';
 
           return {
             items: displayName,
@@ -1287,8 +1313,9 @@ function CreateBillPersonalPageInner() {
             price: money(it.lineTotal),
             line_total: money(it.lineTotal),
             ownerId: it.ownerId,
-            sharedWith:
-              it.ownerId === '__shared__' ? (it.sharedWith || []) : [],
+            sharedWith: sharedWithIds,
+            splitMode,
+            assignedParticipantKeys,
           };
         })
         .filter(
@@ -1302,6 +1329,8 @@ function CreateBillPersonalPageInner() {
             line_total: number;
             ownerId: string;
             sharedWith: string[];
+            splitMode: 'single' | 'shared' | 'equal';
+            assignedParticipantKeys: string[];
           } => x !== null
         );
 

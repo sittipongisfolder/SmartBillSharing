@@ -20,6 +20,8 @@ type PublishBillBody = {
     unit_price?: number;
     price?: number;
     line_total?: number;
+    splitMode?: "equal" | "single" | "shared";
+    assignedParticipantKeys?: string[];
   }>;
   participants?: Array<{
     participantId?: string;
@@ -229,8 +231,16 @@ export async function PATCH(req: NextRequest, context: RouteContext) {
       );
     }
 
-    const cleanedItems = Array.isArray(body.items)
-      ? body.items
+    type IntermediateItem = {
+      items: string;
+      qty: number;
+      unitPrice: number;
+      price: number;
+      splitMode: "equal" | "single" | "shared";
+      _rawKeys: string[];
+    };
+    const intermediateItems: IntermediateItem[] = Array.isArray(body.items)
+      ? (body.items
           .map((it) => {
             const name = clampName(it?.items);
             if (!name) return null;
@@ -246,30 +256,27 @@ export async function PATCH(req: NextRequest, context: RouteContext) {
                   : qty * unitPrice,
             );
 
+            const splitModeRaw = it?.splitMode;
+            const splitMode: "equal" | "single" | "shared" =
+              splitModeRaw === "single" || splitModeRaw === "shared"
+                ? splitModeRaw
+                : "equal";
+
             return {
               items: name,
               qty,
               unitPrice,
               price: lineTotal,
-              splitMode: "equal" as const,
-              assignedParticipantIds: [] as string[],
+              splitMode,
+              _rawKeys: Array.isArray(it?.assignedParticipantKeys)
+                ? (it.assignedParticipantKeys as string[])
+                : [],
             };
           })
-          .filter(
-            (
-              x,
-            ): x is {
-              items: string;
-              qty: number;
-              unitPrice: number;
-              price: number;
-              splitMode: "equal";
-              assignedParticipantIds: string[];
-            } => x !== null,
-          )
+          .filter((x): x is IntermediateItem => x !== null))
       : [];
 
-    if (cleanedItems.length === 0) {
+    if (intermediateItems.length === 0) {
       return NextResponse.json(
         { error: "กรุณาเพิ่มรายการอาหารอย่างน้อย 1 รายการ" },
         { status: 400 },
@@ -466,7 +473,7 @@ export async function PATCH(req: NextRequest, context: RouteContext) {
     }
 
     const itemsTotal = money(
-      cleanedItems.reduce((sum, it) => sum + it.price, 0),
+      intermediateItems.reduce((sum, it) => sum + it.price, 0),
     );
     const effectiveTotal =
       money(toNumber(body.totalPrice, 0)) > 0
@@ -516,6 +523,11 @@ export async function PATCH(req: NextRequest, context: RouteContext) {
       };
     });
 
+    // Ensure every participant has _id before resolving assignedParticipantIds
+    finalParticipants = finalParticipants.map((p) =>
+      p._id ? p : { ...p, _id: new mongoose.Types.ObjectId() },
+    ) as ParticipantInput[];
+
     // ✅ hybrid bill status: ไม่นับ owner แต่นับ guest
     const others = finalParticipants.filter((p) => {
       if (p.kind === "user" && p.userId === ownerId) return false;
@@ -531,13 +543,39 @@ export async function PATCH(req: NextRequest, context: RouteContext) {
             ? "pending"
             : "unpaid";
 
+    // Build stable-key → participant._id map for resolving assignedParticipantIds
+    const participantKeyToId = new Map<string, string>();
+    for (const p of finalParticipants) {
+      const pid = idToString(p._id);
+      if (!pid) continue;
+      if (p.kind === "user") {
+        participantKeyToId.set(`user:${p.userId}`, pid);
+      } else if (p.kind === "guest") {
+        const gid = idToString(p.guestId);
+        if (gid) participantKeyToId.set(`guest:${gid}`, pid);
+      } else if (p.kind === "guest_placeholder") {
+        participantKeyToId.set(
+          `placeholder:${clampName(p.name).toLowerCase()}`,
+          pid,
+        );
+      }
+    }
+
+    // Resolve items: strip _rawKeys and fill real assignedParticipantIds
+    const resolvedItems = intermediateItems.map(({ _rawKeys, ...item }) => ({
+      ...item,
+      assignedParticipantIds: _rawKeys
+        .map((key) => participantKeyToId.get(key))
+        .filter((id): id is string => id !== undefined),
+    }));
+
     const incomingReceiptUrl = (body.receiptImageUrl ?? "").trim();
     const incomingReceiptPublicId = (body.receiptImagePublicId ?? "").trim();
 
     draftBill.set({
       title,
       description: String(body.description ?? "").trim(),
-      items: cleanedItems,
+      items: resolvedItems,
       totalPrice: effectiveTotal,
       splitType: nextSplitType,
       participants: finalParticipants,
