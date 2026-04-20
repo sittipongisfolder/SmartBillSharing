@@ -84,6 +84,12 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "Username is already taken" }, { status: 400 });
     }
 
+    // ✅ กันเลขบัญชีซ้ำ
+    const existingBankAccount = await User.findOne({ bankAccountNumber });
+    if (existingBankAccount) {
+      return NextResponse.json({ error: "เลขบัญชีธนาคารนี้ถูกใช้งานแล้ว" }, { status: 400 });
+    }
+
     // ✅ กัน promptPayPhone ซ้ำเฉพาะกรณีที่มีการกรอก
     if (promptPayPhone) {
       const existingPromptPay = await User.findOne({ promptPayPhone });
@@ -94,19 +100,77 @@ export async function POST(request: NextRequest) {
 
     const hashedPassword = await bcrypt.hash(password, 10);
 
-    await User.create({
+    const newUserData: {
+      name: string;
+      email: string;
+      password: string;
+      bank: string;
+      bankAccountNumber: string;
+      role: "user";
+      promptPayPhone?: string;
+    } = {
       name: username,
       email,
       password: hashedPassword,
       bank,
       bankAccountNumber,
-      promptPayPhone: promptPayPhone || undefined,
       role: "user",
-    });
+    };
+
+    if (promptPayPhone) {
+      newUserData.promptPayPhone = promptPayPhone;
+    }
+
+    await User.create(newUserData);
 
     return NextResponse.json({ message: "User registered successfully" }, { status: 201 });
   } catch (error) {
     console.error("❌ Error occurred:", error);
+
+    // แปลง duplicate key จาก MongoDB ให้เป็นข้อความที่ผู้ใช้เข้าใจง่าย
+    if (
+      typeof error === "object" &&
+      error !== null &&
+      "code" in error &&
+      (error as { code?: number }).code === 11000
+    ) {
+      const keyPattern =
+        "keyPattern" in error && typeof (error as { keyPattern?: unknown }).keyPattern === "object"
+          ? ((error as { keyPattern?: Record<string, 1> }).keyPattern ?? {})
+          : {};
+      const keyValue =
+        "keyValue" in error && typeof (error as { keyValue?: unknown }).keyValue === "object"
+          ? ((error as { keyValue?: Record<string, unknown> }).keyValue ?? {})
+          : {};
+      const errorMessage =
+        "message" in error && typeof (error as { message?: unknown }).message === "string"
+          ? (error as { message: string }).message
+          : "";
+
+      const duplicatedField =
+        Object.keys(keyPattern)[0] ||
+        Object.keys(keyValue)[0] ||
+        (/(email|name|username|bankAccountNumber|promptPayPhone)/i.exec(errorMessage)?.[1] ?? "");
+
+      if (duplicatedField === "email") {
+        return NextResponse.json({ error: "Email is already in use" }, { status: 400 });
+      }
+
+      if (duplicatedField === "name" || duplicatedField === "username") {
+        return NextResponse.json({ error: "Username is already taken" }, { status: 400 });
+      }
+
+      if (duplicatedField === "promptPayPhone") {
+        return NextResponse.json({ error: "PromptPay เบอร์นี้ถูกใช้งานแล้ว" }, { status: 400 });
+      }
+
+      if (duplicatedField === "bankAccountNumber") {
+        return NextResponse.json({ error: "เลขบัญชีธนาคารนี้ถูกใช้งานแล้ว" }, { status: 400 });
+      }
+
+      return NextResponse.json({ error: "ข้อมูลนี้ถูกใช้งานแล้ว" }, { status: 400 });
+    }
+
     return NextResponse.json({ error: "Invalid data" }, { status: 500 });
   }
 }
